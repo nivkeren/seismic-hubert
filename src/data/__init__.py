@@ -14,6 +14,11 @@ from .visualization import (
 from .utils import (
     normalize_waveform,
     apply_filter,
+    log_compress,
+    quantile_normalize,
+    robust_zscore,
+    peak_normalize,
+    mean_subtract,
 )
 
 __all__ = [
@@ -22,6 +27,11 @@ __all__ = [
     "create_stead_dataloader",
     "normalize_waveform",
     "apply_filter",
+    "log_compress",
+    "quantile_normalize",
+    "robust_zscore",
+    "peak_normalize",
+    "mean_subtract",
     "plot_waveform",
     "plot_waveform_batch",
 ]

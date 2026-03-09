@@ -14,7 +14,27 @@ import torch
 from torch.utils.data import Dataset
 from pathlib import Path
 from typing import Literal, Optional
-from data.utils import normalize_waveform, apply_filter
+from data.utils import (
+    normalize_waveform, 
+    apply_filter,
+    log_compress,
+    quantile_normalize,
+    robust_zscore,
+    peak_normalize,
+    mean_subtract,
+)
+
+# Available normalization modes
+NORM_MODES = Literal[
+    "zscore",        # Standard z-score (mean=0, std=1)
+    "robust_zscore", # Median and MAD based (robust to outliers)
+    "peak",          # Scale to [-1, 1] by global max
+    "peak_per_ch",   # Scale to [-1, 1] per channel
+    "quantile",      # Quantile-based (robust to outliers)
+    "log",           # Log compression: sign(x)*log(1+|x|)
+    "mean",          # Subtract mean only (no scaling)
+    "none",          # No normalization
+]
 
 
 
@@ -94,12 +114,8 @@ class STEADDataset(Dataset):
         csv_path: str | Path,
         trace_category: Literal["earthquake_local", "noise"] | None = None,
         channel: Literal["Z", "all", "ENZ"] = "Z",
-        # Normalization options
-        subtract_mean: bool = True,
-        norm_by_std: bool = True,
-        norm_by_max: bool = False,
-        signed_sqrt: bool = False,
-        signed_sqrt_factor: float = 0.5,
+        # Normalization
+        norm_mode: NORM_MODES = "zscore",
         # Filter options
         highpass_freq: Optional[float] = None,
         lowpass_freq: Optional[float] = None,
@@ -116,12 +132,8 @@ class STEADDataset(Dataset):
         self.trace_category = trace_category
         self.transform = transform
         
-        # Normalization settings
-        self.subtract_mean = subtract_mean
-        self.norm_by_std = norm_by_std
-        self.norm_by_max = norm_by_max
-        self.signed_sqrt = signed_sqrt
-        self.signed_sqrt_factor = signed_sqrt_factor
+        # Normalization mode
+        self.norm_mode = norm_mode
         
         # Filter settings
         self.highpass_freq = highpass_freq
@@ -179,17 +191,7 @@ class STEADDataset(Dataset):
         return len(self.trace_names)
     
     def __repr__(self) -> str:
-        norm_parts = []
-        if self.subtract_mean:
-            norm_parts.append("mean")
-        if self.norm_by_std:
-            norm_parts.append("std")
-        if self.norm_by_max:
-            norm_parts.append("max")
-        if self.signed_sqrt:
-            norm_parts.append(f"sqrt({self.signed_sqrt_factor})")
-        norm_str = "+".join(norm_parts) if norm_parts else "none"
-        
+        # Filter info
         filter_parts = []
         if self.highpass_freq:
             filter_parts.append(f"hp={self.highpass_freq}Hz")
@@ -205,7 +207,7 @@ class STEADDataset(Dataset):
             f"STEADDataset(",
             f"  samples: {len(self)} (earthquakes={n_eq}, noise={n_noise})",
             f"  channel: {self.channel!r}, category: {self.trace_category!r}",
-            f"  normalization: {norm_str}, filter: {filter_str}",
+            f"  normalization: {self.norm_mode}, filter: {filter_str}",
         ]
         
         # Add magnitude/distance range for earthquake data
@@ -245,16 +247,35 @@ class STEADDataset(Dataset):
                 sample_rate=self.SAMPLE_RATE,
             )
         
-        # Apply normalization
-        if self.subtract_mean or self.norm_by_std or self.norm_by_max or self.signed_sqrt:
-            waveform = normalize_waveform(
-                waveform,
-                subtract_mean=self.subtract_mean,
-                norm_by_std=self.norm_by_std,
-                norm_by_max=self.norm_by_max,
-                signed_sqrt=self.signed_sqrt,
-                signed_sqrt_factor=self.signed_sqrt_factor,
-            )
+        # Compute amplitude statistics BEFORE normalization (for magnitude prediction)
+        # These preserve information that would be lost by z-score normalization
+        eps = 1e-10
+        amplitude_stats = {
+            "log_max_amp": float(np.log10(np.abs(waveform).max() + eps)),
+            "log_std": float(np.log10(waveform.std() + eps)),
+            "log_energy": float(np.log10((waveform ** 2).sum() + eps)),
+            "raw_max_amp": float(np.abs(waveform).max()),
+        }
+        
+        # Apply normalization based on norm_mode
+        if self.norm_mode == "zscore":
+            waveform = normalize_waveform(waveform, subtract_mean=True, norm_by_std=True)
+        elif self.norm_mode == "robust_zscore":
+            waveform = robust_zscore(waveform)
+        elif self.norm_mode == "peak":
+            waveform = peak_normalize(waveform, per_channel=False)
+        elif self.norm_mode == "peak_per_ch":
+            waveform = peak_normalize(waveform, per_channel=True)
+        elif self.norm_mode == "quantile":
+            waveform = quantile_normalize(waveform)
+        elif self.norm_mode == "log":
+            waveform = log_compress(waveform)
+        elif self.norm_mode == "mean":
+            waveform = mean_subtract(waveform)
+        elif self.norm_mode == "none":
+            pass  # No normalization
+        else:
+            raise ValueError(f"Unknown norm_mode: {self.norm_mode}")
         
         waveform = torch.from_numpy(waveform.astype(np.float32))
         
@@ -272,6 +293,7 @@ class STEADDataset(Dataset):
             "source_magnitude": _safe_float(metadata.get("source_magnitude")),
             "source_distance_km": _safe_float(metadata.get("source_distance_km")),
             "source_depth_km": _safe_float(metadata.get("source_depth_km")),
+            "amplitude_stats": amplitude_stats,
         }
     
     def __del__(self):

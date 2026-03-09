@@ -9,7 +9,12 @@ This project adapts [HuBERT](https://arxiv.org/abs/2106.07447) (Hidden-Unit BERT
 - **Self-supervised pretraining**: Learn representations from unlabeled seismic waveforms
 - **Multi-channel support**: Process 3-component seismograms (E, N, Z)
 - **STEAD integration**: Ready-to-use PyTorch dataset for the Stanford Earthquake Dataset
+- **Flexible normalization**: Multiple normalization methods with amplitude preservation
 - **Transfer learning**: Initialize from pretrained HuBERT models
+
+## Documentation
+
+- [Normalization Guide](docs/normalization.md) - Detailed explanation of normalization options
 
 ## Installation
 
@@ -61,12 +66,15 @@ python -m seismic_hubert.train \
 ```python
 from seismic_hubert.data import STEADDataset, create_stead_dataloader
 
-# Load dataset
+# Load dataset with normalization and filtering
 dataset = STEADDataset(
     hdf5_path="STEAD/merge.hdf5",
     csv_path="STEAD/merge.csv",
     trace_category="earthquake_local",  # or "noise" or None for all
     channel="Z",  # or "all" for 3-channel
+    norm_mode="zscore",  # "zscore", "robust_zscore", "peak", "quantile", "log", "none"
+    highpass_freq=1.0,  # Remove low-frequency noise
+    lowpass_freq=40.0,  # Remove high-frequency noise
     min_magnitude=3.0,
     max_distance_km=100,
 )
@@ -76,6 +84,10 @@ sample = dataset[0]
 print(f"Waveform shape: {sample['waveform'].shape}")
 print(f"Category: {sample['trace_category']}")
 
+# Amplitude statistics (for magnitude/distance prediction)
+print(f"Log max amplitude: {sample['amplitude_stats']['log_max_amp']:.2f}")
+print(f"Log energy: {sample['amplitude_stats']['log_energy']:.2f}")
+
 # Create a dataloader
 dataloader = create_stead_dataloader(
     hdf5_path="STEAD/merge.hdf5",
@@ -83,6 +95,8 @@ dataloader = create_stead_dataloader(
     batch_size=32,
 )
 ```
+
+See [Normalization Guide](docs/normalization.md) for detailed explanation of options.
 
 ### Using the Model
 
@@ -111,15 +125,19 @@ print(f"Feature shape: {features.shape}")
 seismic-hubert/
 ├── pixi.toml                    # Environment and dependencies
 ├── README.md
+├── docs/
+│   └── normalization.md        # Normalization guide
+├── notebooks/
+│   └── explore_stead.ipynb     # Dataset exploration
 ├── STEAD/                       # Dataset directory
 │   ├── merge.hdf5              # Waveform data
 │   └── merge.csv               # Metadata
-└── seismic_hubert/
-    ├── __init__.py
-    ├── train.py                 # Training script
+└── src/
     ├── data/
     │   ├── __init__.py
-    │   └── stead_dataset.py    # STEAD PyTorch dataset
+    │   ├── stead_dataset.py    # STEAD PyTorch dataset
+    │   ├── utils.py            # Normalization functions
+    │   └── visualization.py    # Plotting utilities
     └── models/
         ├── __init__.py
         └── seismic_hubert.py   # HuBERT architecture

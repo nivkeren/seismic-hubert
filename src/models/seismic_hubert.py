@@ -25,9 +25,12 @@ from dataclasses import dataclass
 class SeismicHubertConfig:
     """Configuration for Seismic HuBERT model."""
     
+    # Input specifications
     sample_rate: int = 100  # Seismic data sample rate (Hz)
     num_channels: int = 1  # Number of input channels (1 for Z, 3 for ENZ)
+    waveform_length: int = 6000  # 60 seconds at 100 Hz
     
+    # Transformer config
     hidden_size: int = 768
     num_hidden_layers: int = 12
     num_attention_heads: int = 12
@@ -35,18 +38,28 @@ class SeismicHubertConfig:
     hidden_dropout: float = 0.1
     attention_dropout: float = 0.1
     
-    # CNN Feature Extractor config (adapted for 100 Hz)
-    conv_dim: tuple[int, ...] = (512, 512, 512, 512, 512, 512, 512)
-    conv_stride: tuple[int, ...] = (5, 2, 2, 2, 2, 2, 2)
-    conv_kernel: tuple[int, ...] = (10, 3, 3, 3, 3, 2, 2)
+    # CNN Feature Extractor config
+    # Adjusted for 100 Hz seismic data (vs 16 kHz audio)
+    # Total stride = 32 → 6000 samples → ~187 frames (good for attention)
+    conv_dim: tuple[int, ...] = (512, 512, 512, 512, 512)
+    conv_stride: tuple[int, ...] = (2, 2, 2, 2, 2)  # Total stride: 32
+    conv_kernel: tuple[int, ...] = (10, 8, 4, 4, 4)
     
     # HuBERT-specific
     num_clusters: int = 100  # K-means clusters for masked prediction
-    mask_prob: float = 0.08
-    mask_length: int = 10
+    mask_prob: float = 0.065  # ~65% of frames masked (HuBERT default)
+    mask_length: int = 10  # Consecutive frames to mask
     
-    # Pretrained model (optional)
+    # Pretrained model (optional - not recommended for seismic)
     pretrained_model: str | None = None
+    
+    @property
+    def num_frames(self) -> int:
+        """Approximate number of output frames for waveform_length input."""
+        length = self.waveform_length
+        for k, s in zip(self.conv_kernel, self.conv_stride):
+            length = (length - k) // s + 1
+        return length
     
     def to_hubert_config(self) -> HubertConfig:
         """Convert to HuggingFace HubertConfig."""
@@ -64,6 +77,24 @@ class SeismicHubertConfig:
             feat_extract_activation="gelu",
             mask_time_prob=self.mask_prob,
             mask_time_length=self.mask_length,
+        )
+    
+    @property 
+    def total_stride(self) -> int:
+        """Total downsampling factor of the conv encoder."""
+        result = 1
+        for s in self.conv_stride:
+            result *= s
+        return result
+    
+    def __repr__(self) -> str:
+        return (
+            f"SeismicHubertConfig(\n"
+            f"  input: {self.waveform_length} samples @ {self.sample_rate}Hz, {self.num_channels} ch\n"
+            f"  output: ~{self.num_frames} frames (total stride={self.total_stride})\n"
+            f"  transformer: {self.num_hidden_layers} layers, {self.hidden_size} dim\n"
+            f"  masking: {self.mask_prob:.1%} prob, {self.mask_length} consecutive\n"
+            f")"
         )
 
 
