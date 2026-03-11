@@ -22,11 +22,10 @@ from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from tqdm import tqdm
 
-from seismic_hubert.data import STEADDataset, STEADCollator
-from seismic_hubert.models import (
+from data import STEADDataset, STEADCollator, ClusterLabelGenerator, align_labels_to_features
+from models.seismic_hubert import (
     SeismicHubertConfig,
     SeismicHubertForPreTraining,
-    load_seismic_hubert,
 )
 
 
@@ -157,29 +156,6 @@ def compute_mask_indices(
     return mask
 
 
-def extract_cluster_labels(
-    waveforms: torch.Tensor,
-    kmeans_model=None,
-) -> torch.Tensor:
-    """
-    Extract cluster labels for masked prediction.
-    
-    In the first training iteration, we use simple spectrogram-based features.
-    In later iterations, we cluster on learned representations.
-    """
-    batch_size, seq_length = waveforms.shape[0], waveforms.shape[-1] // 160
-    
-    # For initial training without k-means, use random labels
-    # In practice, you'd extract MFCCs and cluster them
-    if kmeans_model is None:
-        return torch.randint(0, 100, (batch_size, seq_length))
-    
-    # With trained k-means, extract features and assign clusters
-    # features = extract_features(waveforms)
-    # labels = kmeans_model.predict(features)
-    # return torch.from_numpy(labels)
-    raise NotImplementedError("K-means clustering not yet implemented")
-
 
 def train_one_epoch(
     model: nn.Module,
@@ -189,6 +165,7 @@ def train_one_epoch(
     device: torch.device,
     config: argparse.Namespace,
     epoch: int,
+    label_generator: ClusterLabelGenerator,
 ) -> dict[str, float]:
     """Train for one epoch."""
     model.train()
@@ -214,10 +191,10 @@ def train_one_epoch(
             device,
         )
         
-        # Use random cluster labels for initial training
-        labels = torch.randint(
-            0, config.num_clusters, (waveforms.shape[0], seq_length), device=device
-        )
+        # Get cluster labels from spectrogram features
+        labels = label_generator.get_labels(batch["input_values"])
+        labels = align_labels_to_features(labels, seq_length)
+        labels = labels.to(device)
         
         outputs = model(
             input_values=waveforms,
@@ -251,6 +228,7 @@ def validate(
     dataloader: DataLoader,
     device: torch.device,
     config: argparse.Namespace,
+    label_generator: ClusterLabelGenerator,
 ) -> dict[str, float]:
     """Validate the model."""
     model.eval()
@@ -273,9 +251,10 @@ def validate(
                 device,
             )
             
-            labels = torch.randint(
-                0, config.num_clusters, (waveforms.shape[0], seq_length), device=device
-            )
+            # Get cluster labels from spectrogram features
+            labels = label_generator.get_labels(batch["input_values"])
+            labels = align_labels_to_features(labels, seq_length)
+            labels = labels.to(device)
             
             outputs = model(
                 input_values=waveforms,
@@ -313,7 +292,9 @@ def main():
         csv_path=args.csv_path,
         channel=args.channel,
         max_samples=args.max_samples,
-        normalize=True,
+        norm_mode="zscore",
+        highpass_freq=1.0,
+        lowpass_freq=40.0,
     )
     
     print(f"Dataset statistics:")
@@ -344,7 +325,30 @@ def main():
         pin_memory=True,
     )
     
-    print("Initializing model...")
+    # Initialize K-means clustering for targets
+    print("\nInitializing K-means clustering for training targets...")
+    kmeans_path = output_dir / "kmeans.pkl"
+    
+    # Create a temporary dataloader for K-means fitting (no shuffle, subset of data)
+    kmeans_loader = DataLoader(
+        train_dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+        collate_fn=STEADCollator(),
+    )
+    
+    label_generator = ClusterLabelGenerator(
+        n_clusters=args.num_clusters,
+        feature_dim=32,
+        hop_length=32,
+        sample_rate=100,
+    )
+    label_generator.fit(kmeans_loader, max_samples=min(10000, len(train_dataset)))
+    label_generator.save(kmeans_path)
+    print(f"K-means model saved to {kmeans_path}")
+    
+    print("\nInitializing model...")
     config = SeismicHubertConfig(
         num_channels=num_channels,
         hidden_size=args.hidden_size,
@@ -382,10 +386,10 @@ def main():
     print("\nStarting training...")
     for epoch in range(args.epochs):
         train_metrics = train_one_epoch(
-            model, train_loader, optimizer, scheduler, device, args, epoch
+            model, train_loader, optimizer, scheduler, device, args, epoch, label_generator
         )
         
-        val_metrics = validate(model, val_loader, device, args)
+        val_metrics = validate(model, val_loader, device, args, label_generator)
         
         print(
             f"Epoch {epoch}: "

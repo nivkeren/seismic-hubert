@@ -20,6 +20,11 @@ from .utils import (
     peak_normalize,
     mean_subtract,
 )
+from .clustering import (
+    ClusterLabelGenerator,
+    extract_spectrogram_features,
+    align_labels_to_features,
+)
 
 __all__ = [
     "STEADDataset",
@@ -34,4 +39,7 @@ __all__ = [
     "mean_subtract",
     "plot_waveform",
     "plot_waveform_batch",
+    "ClusterLabelGenerator",
+    "extract_spectrogram_features",
+    "align_labels_to_features",
 ]
