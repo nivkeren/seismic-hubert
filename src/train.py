@@ -15,7 +15,7 @@ import numpy as np
 import torch
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, EarlyStopping
-from pytorch_lightning.loggers import WandbLogger, TensorBoardLogger
+from pytorch_lightning.loggers import WandbLogger, TensorBoardLogger, MLFlowLogger
 from torch.utils.data import DataLoader, random_split
 
 from data import STEADDataset, STEADCollator, ClusterLabelGenerator, align_labels_to_features
@@ -322,6 +322,15 @@ def parse_args():
     parser.add_argument(
         "--wandb_project", type=str, default="seismic-hubert", help="W&B project"
     )
+    parser.add_argument("--mlflow", action="store_true", help="Use MLflow tracking")
+    parser.add_argument(
+        "--mlflow_tracking_uri", type=str, default="mlruns",
+        help="MLflow tracking URI (local path or server URL)"
+    )
+    parser.add_argument(
+        "--mlflow_experiment", type=str, default="seismic-hubert",
+        help="MLflow experiment name"
+    )
     parser.add_argument(
         "--resume_from", type=str, default=None, help="Resume from checkpoint"
     )
@@ -427,7 +436,36 @@ def main():
     ]
     
     # Logger
-    if args.wandb:
+    if args.mlflow:
+        logger = MLFlowLogger(
+            experiment_name=args.mlflow_experiment,
+            tracking_uri=args.mlflow_tracking_uri,
+            log_model=True,
+            tags={
+                "model": "seismic-hubert",
+                "channel": args.channel,
+                "hidden_size": str(args.hidden_size),
+                "num_layers": str(args.num_layers),
+            },
+        )
+        # Log hyperparameters
+        logger.log_hyperparams({
+            "hidden_size": args.hidden_size,
+            "num_layers": args.num_layers,
+            "num_heads": args.num_heads,
+            "num_clusters": args.num_clusters,
+            "batch_size": args.batch_size,
+            "learning_rate": args.lr,
+            "weight_decay": args.weight_decay,
+            "warmup_steps": args.warmup_steps,
+            "mask_prob": args.mask_prob,
+            "mask_length": args.mask_length,
+            "channel": args.channel,
+            "norm_mode": "zscore",
+            "highpass_freq": 1.0,
+            "lowpass_freq": 40.0,
+        })
+    elif args.wandb:
         logger = WandbLogger(
             project=args.wandb_project,
             save_dir=output_dir,
@@ -462,6 +500,34 @@ def main():
         datamodule=data_module,
         ckpt_path=args.resume_from,
     )
+    
+    # Log artifacts to MLflow
+    if args.mlflow:
+        import mlflow
+        
+        # Log K-means model
+        if kmeans_path.exists():
+            mlflow.log_artifact(str(kmeans_path), artifact_path="kmeans")
+        
+        # Log best checkpoint
+        best_ckpt = callbacks[0].best_model_path
+        if best_ckpt:
+            mlflow.log_artifact(best_ckpt, artifact_path="checkpoints")
+        
+        # Log model config
+        config_path = output_dir / "model_config.json"
+        import json
+        with open(config_path, "w") as f:
+            json.dump({
+                "num_channels": config.num_channels,
+                "hidden_size": config.hidden_size,
+                "num_hidden_layers": config.num_hidden_layers,
+                "num_attention_heads": config.num_attention_heads,
+                "num_clusters": config.num_clusters,
+                "mask_prob": config.mask_prob,
+                "mask_length": config.mask_length,
+            }, f, indent=2)
+        mlflow.log_artifact(str(config_path), artifact_path="config")
     
     print(f"\nTraining complete!")
     print(f"Best model checkpoint: {callbacks[0].best_model_path}")
