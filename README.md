@@ -44,10 +44,24 @@ Place both files in the `STEAD/` directory.
 
 ### Training
 
-Basic training:
+#### Using Config Files (Recommended)
 
 ```bash
 cd src
+python train.py --config ../config/default.yaml
+```
+
+Config files use YAML format with all training options. CLI arguments override config values:
+
+```bash
+python train.py --config ../config/advanced.yaml --max_epochs 50 --batch_size 32
+```
+
+See `config/default.yaml` for basic settings and `config/advanced.yaml` for all domain-specific features enabled.
+
+#### Using CLI Arguments Only
+
+```bash
 python train.py --hdf5_path ../STEAD/merge.hdf5 --csv_path ../STEAD/merge.csv
 ```
 

@@ -1,0 +1,79 @@
+# Seismic HuBERT Training Configuration
+# 
+# Usage:
+#   python src/train.py --config config/default.yaml
+#
+# CLI arguments override config file values:
+#   python src/train.py --config config/default.yaml --max_epochs 50
+
+model:
+  hidden_size: 768
+  num_layers: 12
+  num_heads: 12
+  num_clusters: 100
+
+data:
+  hdf5_path: "STEAD/merge.hdf5"
+  csv_path: "STEAD/merge.csv"
+  channel: "Z"  # "Z" for vertical only, "all" for 3-component
+  max_samples: null  # null for all samples, int for debugging
+  norm_mode: "zscore"
+  highpass_freq: 1.0
+  lowpass_freq: 40.0
+  train_val_split: 0.95
+
+clustering:
+  # Feature extraction for K-means targets
+  # Options: spectrogram, stalta, frequency_bands, multi_channel, combined
+  feature_mode: "spectrogram"
+  include_stalta: false
+  include_frequency_bands: false
+  include_multichannel: false  # requires channel: "all"
+  feature_dim: 32
+  hop_length: 32
+
+masking:
+  mask_prob: 0.08
+  mask_length: 5  # Used when schedule: constant
+  
+  # Epoch-based scheduling
+  # Options: constant, linear, step, cosine
+  schedule: "constant"
+  mask_length_start: 3
+  mask_length_end: 12
+  
+  # Distance-adaptive masking
+  distance_adaptive: false
+  distance_mask_min: 2   # For close events (~10 km)
+  distance_mask_max: 15  # For distant events (~200 km)
+
+training:
+  batch_size: 16
+  lr: 5.0e-5
+  weight_decay: 0.01
+  max_epochs: 100
+  warmup_steps: 1000
+  accumulate_grad_batches: 4
+  gradient_clip_val: 1.0
+  
+  # System
+  num_workers: 4
+  accelerator: "auto"  # auto, cpu, gpu, mps
+  devices: 1
+  precision: "32"  # 32, 16-mixed, bf16-mixed
+  seed: 42
+
+logging:
+  output_dir: "outputs"
+  
+  # MLflow
+  mlflow: false
+  mlflow_tracking_uri: "mlruns"
+  mlflow_experiment: "seismic-hubert"
+  
+  # Weights & Biases
+  wandb: false
+  wandb_project: "seismic-hubert"
+
+# Resume from checkpoint
+resume_from: null

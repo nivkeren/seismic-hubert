@@ -388,12 +388,18 @@ class SeismicHubertLightning(pl.LightningModule):
 def parse_args():
     parser = argparse.ArgumentParser(description="Train Seismic HuBERT")
     
+    # Config file
+    parser.add_argument(
+        "--config", type=str, default=None,
+        help="Path to YAML config file. CLI args override config file values."
+    )
+    
     # Data arguments
     parser.add_argument(
-        "--hdf5_path", type=str, required=True, help="Path to STEAD HDF5 file"
+        "--hdf5_path", type=str, default=None, help="Path to STEAD HDF5 file"
     )
     parser.add_argument(
-        "--csv_path", type=str, required=True, help="Path to STEAD CSV file"
+        "--csv_path", type=str, default=None, help="Path to STEAD CSV file"
     )
     parser.add_argument(
         "--channel", type=str, default="Z", choices=["Z", "all"],
@@ -524,22 +530,42 @@ def parse_args():
 def main():
     args = parse_args()
     
+    # Load config file if provided
+    if args.config:
+        from config import TrainConfig
+        print(f"Loading config from: {args.config}")
+        cfg = TrainConfig.from_yaml(args.config)
+        cfg.merge_cli_args(args)
+    else:
+        # Create config from CLI args only
+        from config import TrainConfig
+        cfg = TrainConfig()
+        cfg.merge_cli_args(args)
+    
+    # Validate required paths
+    if not cfg.data.hdf5_path or not cfg.data.csv_path:
+        raise ValueError("hdf5_path and csv_path are required (via --config or CLI)")
+    
     # Set seed
-    pl.seed_everything(args.seed)
+    pl.seed_everything(cfg.training.seed)
     
     # Create output directory
-    output_dir = Path(args.output_dir)
+    output_dir = Path(cfg.logging.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     
+    # Save effective config
+    cfg.save_yaml(output_dir / "config.yaml")
+    print(f"Config saved to: {output_dir / 'config.yaml'}")
+    
     # Initialize data module
-    print("Initializing data module...")
+    print("\nInitializing data module...")
     data_module = STEADDataModule(
-        hdf5_path=args.hdf5_path,
-        csv_path=args.csv_path,
-        channel=args.channel,
-        batch_size=args.batch_size,
-        num_workers=args.num_workers,
-        max_samples=args.max_samples,
+        hdf5_path=cfg.data.hdf5_path,
+        csv_path=cfg.data.csv_path,
+        channel=cfg.data.channel,
+        batch_size=cfg.training.batch_size,
+        num_workers=cfg.training.num_workers,
+        max_samples=cfg.data.max_samples,
     )
     data_module.setup()
     
@@ -553,72 +579,74 @@ def main():
     else:
         kmeans_loader = DataLoader(
             data_module.train_dataset,
-            batch_size=args.batch_size,
+            batch_size=cfg.training.batch_size,
             shuffle=False,
-            num_workers=args.num_workers,
+            num_workers=cfg.training.num_workers,
             collate_fn=STEADCollator(),
         )
         
         label_generator = ClusterLabelGenerator(
-            n_clusters=args.num_clusters,
-            feature_dim=32,
-            hop_length=32,
+            n_clusters=cfg.model.num_clusters,
+            feature_dim=cfg.clustering.feature_dim,
+            hop_length=cfg.clustering.hop_length,
             sample_rate=100,
-            feature_mode=args.feature_mode,
-            include_stalta=args.include_stalta,
-            include_frequency_bands=args.include_frequency_bands,
-            include_multichannel=args.include_multichannel,
+            feature_mode=cfg.clustering.feature_mode,
+            include_stalta=cfg.clustering.include_stalta,
+            include_frequency_bands=cfg.clustering.include_frequency_bands,
+            include_multichannel=cfg.clustering.include_multichannel,
         )
-        print(f"Using feature mode: {args.feature_mode}")
+        print(f"Using feature mode: {cfg.clustering.feature_mode}")
         label_generator.fit(kmeans_loader, max_samples=min(10000, len(data_module.train_dataset)))
         label_generator.save(kmeans_path)
         print(f"K-means model saved to {kmeans_path}")
     
     # Initialize model
     print("\nInitializing model...")
-    num_channels = 1 if args.channel == "Z" else 3
+    num_channels = 1 if cfg.data.channel == "Z" else 3
     
-    config = SeismicHubertConfig(
+    model_config = SeismicHubertConfig(
         num_channels=num_channels,
-        hidden_size=args.hidden_size,
-        num_hidden_layers=args.num_layers,
-        num_attention_heads=args.num_heads,
-        num_clusters=args.num_clusters,
-        mask_prob=args.mask_prob,
-        mask_length=args.mask_length,
+        hidden_size=cfg.model.hidden_size,
+        num_hidden_layers=cfg.model.num_layers,
+        num_attention_heads=cfg.model.num_heads,
+        num_clusters=cfg.model.num_clusters,
+        mask_prob=cfg.masking.mask_prob,
+        mask_length=cfg.masking.mask_length,
     )
     
     # Estimate max steps for scheduler
-    steps_per_epoch = len(data_module.train_dataset) // (args.batch_size * args.accumulate_grad_batches)
-    max_steps = steps_per_epoch * args.max_epochs
+    steps_per_epoch = len(data_module.train_dataset) // (
+        cfg.training.batch_size * cfg.training.accumulate_grad_batches
+    )
+    max_steps = steps_per_epoch * cfg.training.max_epochs
     
     # Determine mask length parameters
-    if args.mask_schedule == "constant" and not args.distance_adaptive_mask:
-        mask_start = args.mask_length
-        mask_end = args.mask_length
+    if cfg.masking.schedule == "constant" and not cfg.masking.distance_adaptive:
+        mask_start = cfg.masking.mask_length
+        mask_end = cfg.masking.mask_length
     else:
-        mask_start = args.mask_length_start
-        mask_end = args.mask_length_end
-        if args.mask_schedule != "constant":
-            print(f"Mask scheduling: {args.mask_schedule} from {mask_start} to {mask_end} frames")
+        mask_start = cfg.masking.mask_length_start
+        mask_end = cfg.masking.mask_length_end
+        if cfg.masking.schedule != "constant":
+            print(f"Mask scheduling: {cfg.masking.schedule} from {mask_start} to {mask_end} frames")
     
-    if args.distance_adaptive_mask:
-        print(f"Distance-adaptive masking: {args.distance_mask_min}-{args.distance_mask_max} frames")
+    if cfg.masking.distance_adaptive:
+        print(f"Distance-adaptive masking: {cfg.masking.distance_mask_min}-{cfg.masking.distance_mask_max} frames")
     
     model = SeismicHubertLightning(
-        config=config,
+        config=model_config,
         label_generator=label_generator,
-        learning_rate=args.lr,
-        weight_decay=args.weight_decay,
-        warmup_steps=args.warmup_steps,
+        learning_rate=cfg.training.lr,
+        weight_decay=cfg.training.weight_decay,
+        warmup_steps=cfg.training.warmup_steps,
         max_steps=max_steps,
-        max_epochs=args.max_epochs,
+        max_epochs=cfg.training.max_epochs,
         mask_length_start=mask_start,
         mask_length_end=mask_end,
-        mask_schedule=args.mask_schedule,
-        distance_adaptive_mask=args.distance_adaptive_mask,
-        distance_mask_min=args.distance_mask_min,
-        distance_mask_max=args.distance_mask_max,
+        mask_schedule=cfg.masking.schedule,
+        distance_adaptive_mask=cfg.masking.distance_adaptive,
+        distance_mask_min=cfg.masking.distance_mask_min,
+        distance_mask_max=cfg.masking.distance_mask_max,
     )
     
     total_params = sum(p.numel() for p in model.parameters())
@@ -644,38 +672,23 @@ def main():
     ]
     
     # Logger
-    if args.mlflow:
+    if cfg.logging.mlflow:
         logger = MLFlowLogger(
-            experiment_name=args.mlflow_experiment,
-            tracking_uri=args.mlflow_tracking_uri,
+            experiment_name=cfg.logging.mlflow_experiment,
+            tracking_uri=cfg.logging.mlflow_tracking_uri,
             log_model=True,
             tags={
                 "model": "seismic-hubert",
-                "channel": args.channel,
-                "hidden_size": str(args.hidden_size),
-                "num_layers": str(args.num_layers),
+                "channel": cfg.data.channel,
+                "hidden_size": str(cfg.model.hidden_size),
+                "num_layers": str(cfg.model.num_layers),
             },
         )
         # Log hyperparameters
-        logger.log_hyperparams({
-            "hidden_size": args.hidden_size,
-            "num_layers": args.num_layers,
-            "num_heads": args.num_heads,
-            "num_clusters": args.num_clusters,
-            "batch_size": args.batch_size,
-            "learning_rate": args.lr,
-            "weight_decay": args.weight_decay,
-            "warmup_steps": args.warmup_steps,
-            "mask_prob": args.mask_prob,
-            "mask_length": args.mask_length,
-            "channel": args.channel,
-            "norm_mode": "zscore",
-            "highpass_freq": 1.0,
-            "lowpass_freq": 40.0,
-        })
-    elif args.wandb:
+        logger.log_hyperparams(cfg.to_dict())
+    elif cfg.logging.wandb:
         logger = WandbLogger(
-            project=args.wandb_project,
+            project=cfg.logging.wandb_project,
             save_dir=output_dir,
             log_model=True,
         )
@@ -687,12 +700,12 @@ def main():
     
     # Trainer
     trainer = pl.Trainer(
-        accelerator=args.accelerator,
-        devices=args.devices,
-        precision=args.precision,
-        max_epochs=args.max_epochs,
-        accumulate_grad_batches=args.accumulate_grad_batches,
-        gradient_clip_val=args.gradient_clip_val,
+        accelerator=cfg.training.accelerator,
+        devices=cfg.training.devices,
+        precision=cfg.training.precision,
+        max_epochs=cfg.training.max_epochs,
+        accumulate_grad_batches=cfg.training.accumulate_grad_batches,
+        gradient_clip_val=cfg.training.gradient_clip_val,
         callbacks=callbacks,
         logger=logger,
         default_root_dir=output_dir,
@@ -706,11 +719,11 @@ def main():
     trainer.fit(
         model,
         datamodule=data_module,
-        ckpt_path=args.resume_from,
+        ckpt_path=cfg.resume_from,
     )
     
     # Log artifacts to MLflow
-    if args.mlflow:
+    if cfg.logging.mlflow:
         import mlflow
         
         # Log K-means model
@@ -722,20 +735,8 @@ def main():
         if best_ckpt:
             mlflow.log_artifact(best_ckpt, artifact_path="checkpoints")
         
-        # Log model config
-        config_path = output_dir / "model_config.json"
-        import json
-        with open(config_path, "w") as f:
-            json.dump({
-                "num_channels": config.num_channels,
-                "hidden_size": config.hidden_size,
-                "num_hidden_layers": config.num_hidden_layers,
-                "num_attention_heads": config.num_attention_heads,
-                "num_clusters": config.num_clusters,
-                "mask_prob": config.mask_prob,
-                "mask_length": config.mask_length,
-            }, f, indent=2)
-        mlflow.log_artifact(str(config_path), artifact_path="config")
+        # Log config
+        mlflow.log_artifact(str(output_dir / "config.yaml"), artifact_path="config")
     
     print(f"\nTraining complete!")
     print(f"Best model checkpoint: {callbacks[0].best_model_path}")
