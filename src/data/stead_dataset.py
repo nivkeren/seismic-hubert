@@ -427,4 +427,9 @@ class STEADCollator:
             result["trace_category"] = [item["trace_category"] for item in batch]
             result["trace_name"] = [item["trace_name"] for item in batch]
         
+        # Include distance for adaptive masking (None for noise samples)
+        result["source_distance_km"] = torch.tensor([
+            item.get("source_distance_km") or -1.0 for item in batch
+        ], dtype=torch.float32)
+        
         return result
