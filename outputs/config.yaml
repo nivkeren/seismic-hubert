@@ -1,0 +1,52 @@
+model:
+  hidden_size: 768
+  num_layers: 12
+  num_heads: 12
+  num_clusters: 100
+data:
+  hdf5_path: ../STEAD/merge.hdf5
+  csv_path: ../STEAD/merge.csv
+  channel: Z
+  max_samples: 500
+  norm_mode: zscore
+  highpass_freq: 1.0
+  lowpass_freq: 40.0
+  train_val_split: 0.95
+clustering:
+  feature_mode: spectrogram
+  include_stalta: false
+  include_frequency_bands: false
+  include_multichannel: false
+  feature_dim: 32
+  hop_length: 32
+masking:
+  mask_prob: 0.08
+  mask_length: 5
+  schedule: constant
+  mask_length_start: 3
+  mask_length_end: 12
+  distance_adaptive: false
+  distance_mask_min: 2
+  distance_mask_max: 15
+training:
+  batch_size: 16
+  lr: 5.0e-05
+  weight_decay: 0.01
+  max_epochs: 100
+  warmup_steps: 1000
+  accumulate_grad_batches: 4
+  gradient_clip_val: 1.0
+  num_workers: 4
+  accelerator: auto
+  devices: 1
+  precision: '32'
+  seed: 42
+logging:
+  output_dir: outputs
+  run_name: overfit_00
+  mlflow: false
+  mlflow_tracking_uri: mlruns
+  mlflow_experiment: seismic-hubert
+  wandb: false
+  wandb_project: seismic-hubert
+resume_from: null
