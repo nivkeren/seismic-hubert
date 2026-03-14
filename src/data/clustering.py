@@ -5,6 +5,12 @@ This module provides functionality to:
 1. Extract spectrogram features from seismic waveforms
 2. Run K-means clustering on these features
 3. Generate cluster labels for training targets
+
+Domain-specific features for seismic data:
+- Spectrogram features (default): STFT-based frequency content
+- STA/LTA features: Short-term/Long-term Average ratio for transient detection
+- Multi-channel features: Cross-channel correlation for polarization analysis
+- Frequency band energy: Energy in specific seismic frequency bands
 """
 
 from __future__ import annotations
@@ -17,7 +23,10 @@ from scipy import signal
 from tqdm import tqdm
 from pathlib import Path
 import pickle
-from typing import Optional
+from typing import Optional, Literal
+
+# Feature extraction modes
+FEATURE_MODES = Literal["spectrogram", "stalta", "frequency_bands", "multi_channel", "combined"]
 
 
 def extract_spectrogram_features(
@@ -73,14 +82,336 @@ def extract_spectrogram_features(
     return features.astype(np.float32)
 
 
+def extract_stalta_features(
+    waveform: np.ndarray,
+    sample_rate: int = 100,
+    sta_window: float = 1.0,
+    lta_window: float = 10.0,
+    hop_length: int = 32,
+) -> np.ndarray:
+    """
+    Extract STA/LTA (Short-Term Average / Long-Term Average) features.
+    
+    STA/LTA is a classic seismic detection method that captures transient energy
+    changes, making it ideal for identifying P-wave onsets and other impulsive signals.
+    
+    Parameters
+    ----------
+    waveform : np.ndarray
+        Input waveform of shape (channels, samples) or (samples,)
+    sample_rate : int
+        Sample rate in Hz
+    sta_window : float
+        Short-term window length in seconds
+    lta_window : float
+        Long-term window length in seconds
+    hop_length : int
+        Hop length between frames
+    
+    Returns
+    -------
+    np.ndarray
+        STA/LTA features of shape (frames, features)
+    """
+    if waveform.ndim == 1:
+        waveform = waveform[np.newaxis, :]
+    
+    n_channels = min(waveform.shape[0], 3)
+    sta_samples = int(sta_window * sample_rate)
+    lta_samples = int(lta_window * sample_rate)
+    
+    features_list = []
+    
+    for ch in range(n_channels):
+        wav = waveform[ch]
+        wav_squared = wav ** 2
+        
+        # Compute running averages using convolution
+        sta_kernel = np.ones(sta_samples) / sta_samples
+        lta_kernel = np.ones(lta_samples) / lta_samples
+        
+        sta = np.convolve(wav_squared, sta_kernel, mode='same')
+        lta = np.convolve(wav_squared, lta_kernel, mode='same')
+        
+        # STA/LTA ratio (with epsilon to avoid division by zero)
+        stalta = sta / (lta + 1e-10)
+        
+        # Also include raw energy as a feature
+        energy = np.log(sta + 1e-10)
+        
+        # Downsample to frame rate
+        n_frames = len(wav) // hop_length
+        stalta_frames = stalta[::hop_length][:n_frames]
+        energy_frames = energy[::hop_length][:n_frames]
+        
+        features_list.extend([stalta_frames, energy_frames])
+    
+    # Stack features: (frames, n_channels * 2)
+    features = np.stack(features_list, axis=1)
+    
+    return features.astype(np.float32)
+
+
+def extract_frequency_band_features(
+    waveform: np.ndarray,
+    sample_rate: int = 100,
+    hop_length: int = 32,
+    bands: list[tuple[float, float]] | None = None,
+) -> np.ndarray:
+    """
+    Extract energy in specific seismic frequency bands.
+    
+    Default bands are chosen for typical seismic signals:
+    - 0.1-1 Hz: Teleseismic and surface waves
+    - 1-5 Hz: Regional earthquakes
+    - 5-20 Hz: Local earthquakes
+    - 20-40 Hz: High-frequency local events
+    
+    Parameters
+    ----------
+    waveform : np.ndarray
+        Input waveform of shape (channels, samples) or (samples,)
+    sample_rate : int
+        Sample rate in Hz
+    hop_length : int
+        Hop length between frames
+    bands : list of tuples, optional
+        Frequency bands as (low_hz, high_hz) tuples
+    
+    Returns
+    -------
+    np.ndarray
+        Band energy features of shape (frames, n_bands * n_channels)
+    """
+    if waveform.ndim == 1:
+        waveform = waveform[np.newaxis, :]
+    
+    if bands is None:
+        # Default seismic frequency bands
+        bands = [
+            (0.1, 1.0),   # Teleseismic
+            (1.0, 5.0),   # Regional
+            (5.0, 20.0),  # Local
+            (20.0, 40.0), # High-frequency
+        ]
+    
+    n_channels = min(waveform.shape[0], 3)
+    n_samples = waveform.shape[1]
+    n_frames = n_samples // hop_length
+    
+    features_list = []
+    
+    for ch in range(n_channels):
+        wav = waveform[ch]
+        
+        for low, high in bands:
+            # Skip bands outside Nyquist frequency
+            if low >= sample_rate / 2:
+                continue
+            high = min(high, sample_rate / 2 - 0.1)
+            
+            # Design bandpass filter
+            sos = signal.butter(4, [low, high], btype='band', fs=sample_rate, output='sos')
+            filtered = signal.sosfilt(sos, wav)
+            
+            # Compute envelope using Hilbert transform
+            envelope = np.abs(signal.hilbert(filtered))
+            log_envelope = np.log(envelope + 1e-10)
+            
+            # Downsample to frame rate
+            band_features = log_envelope[::hop_length][:n_frames]
+            features_list.append(band_features)
+    
+    features = np.stack(features_list, axis=1)
+    
+    return features.astype(np.float32)
+
+
+def extract_multichannel_features(
+    waveform: np.ndarray,
+    sample_rate: int = 100,
+    hop_length: int = 32,
+    window_samples: int = 100,
+) -> np.ndarray:
+    """
+    Extract multi-channel polarization features for 3-component seismograms.
+    
+    Computes cross-channel correlations and polarization attributes that capture
+    the directional properties of seismic waves (useful for distinguishing P, S,
+    and surface waves).
+    
+    Parameters
+    ----------
+    waveform : np.ndarray
+        Input waveform of shape (3, samples) for E, N, Z components
+    sample_rate : int
+        Sample rate in Hz
+    hop_length : int
+        Hop length between frames
+    window_samples : int
+        Window size for computing correlations
+    
+    Returns
+    -------
+    np.ndarray
+        Polarization features of shape (frames, features)
+    """
+    if waveform.ndim == 1:
+        # Single channel - return dummy features
+        n_frames = len(waveform) // hop_length
+        return np.zeros((n_frames, 6), dtype=np.float32)
+    
+    if waveform.shape[0] < 3:
+        # Pad to 3 channels if needed
+        padding = np.zeros((3 - waveform.shape[0], waveform.shape[1]))
+        waveform = np.vstack([waveform, padding])
+    
+    n_samples = waveform.shape[1]
+    n_frames = n_samples // hop_length
+    
+    # Extract E, N, Z components
+    E, N, Z = waveform[0], waveform[1], waveform[2]
+    
+    features_list = []
+    
+    for frame_idx in range(n_frames):
+        start = frame_idx * hop_length
+        end = min(start + window_samples, n_samples)
+        
+        e_win = E[start:end]
+        n_win = N[start:end]
+        z_win = Z[start:end]
+        
+        # Compute covariance matrix elements
+        cov_ee = np.mean(e_win ** 2)
+        cov_nn = np.mean(n_win ** 2)
+        cov_zz = np.mean(z_win ** 2)
+        cov_en = np.mean(e_win * n_win)
+        cov_ez = np.mean(e_win * z_win)
+        cov_nz = np.mean(n_win * z_win)
+        
+        # Horizontal to vertical ratio (P vs S wave indicator)
+        h_energy = cov_ee + cov_nn
+        v_energy = cov_zz
+        hv_ratio = np.log((h_energy + 1e-10) / (v_energy + 1e-10))
+        
+        # Total energy
+        total_energy = np.log(h_energy + v_energy + 1e-10)
+        
+        # Cross-correlations (normalized)
+        norm = np.sqrt(cov_ee * cov_nn * cov_zz + 1e-10)
+        en_corr = cov_en / (np.sqrt(cov_ee * cov_nn) + 1e-10)
+        ez_corr = cov_ez / (np.sqrt(cov_ee * cov_zz) + 1e-10)
+        nz_corr = cov_nz / (np.sqrt(cov_nn * cov_zz) + 1e-10)
+        
+        # Rectilinearity (how linear vs elliptical the particle motion is)
+        # Simplified: ratio of dominant to minor eigenvalue
+        cov_matrix = np.array([
+            [cov_ee, cov_en, cov_ez],
+            [cov_en, cov_nn, cov_nz],
+            [cov_ez, cov_nz, cov_zz]
+        ])
+        eigenvalues = np.linalg.eigvalsh(cov_matrix)
+        eigenvalues = np.sort(eigenvalues)[::-1]
+        rectilinearity = 1 - (eigenvalues[1] + eigenvalues[2]) / (2 * eigenvalues[0] + 1e-10)
+        
+        features_list.append([
+            hv_ratio, total_energy, en_corr, ez_corr, nz_corr, rectilinearity
+        ])
+    
+    features = np.array(features_list, dtype=np.float32)
+    
+    return features
+
+
+def extract_combined_features(
+    waveform: np.ndarray,
+    sample_rate: int = 100,
+    hop_length: int = 32,
+    include_spectrogram: bool = True,
+    include_stalta: bool = True,
+    include_frequency_bands: bool = True,
+    include_multichannel: bool = True,
+    n_fft: int = 64,
+    n_mels: int = 32,
+) -> np.ndarray:
+    """
+    Extract combined features from multiple feature types.
+    
+    This provides the richest representation for K-means clustering by combining
+    spectral, temporal, and polarization information.
+    
+    Parameters
+    ----------
+    waveform : np.ndarray
+        Input waveform
+    sample_rate : int
+        Sample rate in Hz
+    hop_length : int
+        Hop length between frames
+    include_spectrogram : bool
+        Include STFT spectrogram features
+    include_stalta : bool
+        Include STA/LTA features
+    include_frequency_bands : bool
+        Include frequency band energy features
+    include_multichannel : bool
+        Include multi-channel polarization features
+    n_fft : int
+        FFT size for spectrogram
+    n_mels : int
+        Number of frequency bins for spectrogram
+    
+    Returns
+    -------
+    np.ndarray
+        Combined features of shape (frames, total_features)
+    """
+    feature_parts = []
+    
+    if include_spectrogram:
+        spec_feat = extract_spectrogram_features(
+            waveform, sample_rate, n_fft, hop_length, n_mels
+        )
+        feature_parts.append(spec_feat)
+    
+    if include_stalta:
+        stalta_feat = extract_stalta_features(waveform, sample_rate, hop_length=hop_length)
+        feature_parts.append(stalta_feat)
+    
+    if include_frequency_bands:
+        band_feat = extract_frequency_band_features(waveform, sample_rate, hop_length)
+        feature_parts.append(band_feat)
+    
+    if include_multichannel and waveform.ndim > 1 and waveform.shape[0] >= 3:
+        mc_feat = extract_multichannel_features(waveform, sample_rate, hop_length)
+        feature_parts.append(mc_feat)
+    
+    if not feature_parts:
+        raise ValueError("At least one feature type must be enabled")
+    
+    # Align frame counts (use minimum)
+    min_frames = min(f.shape[0] for f in feature_parts)
+    feature_parts = [f[:min_frames] for f in feature_parts]
+    
+    return np.concatenate(feature_parts, axis=1).astype(np.float32)
+
+
 class ClusterLabelGenerator:
     """
     Generates cluster labels for HuBERT training.
     
     This class handles:
-    1. Extracting spectrogram features from waveforms
+    1. Extracting features from waveforms (multiple feature types available)
     2. Training K-means clustering
     3. Assigning cluster labels to new waveforms
+    
+    Feature modes:
+    - "spectrogram": STFT-based frequency content (default, similar to audio HuBERT)
+    - "stalta": STA/LTA ratio features for transient detection
+    - "frequency_bands": Energy in seismic frequency bands
+    - "multi_channel": Polarization features for 3-component data
+    - "combined": All features concatenated for rich representation
     """
     
     def __init__(
@@ -89,23 +420,99 @@ class ClusterLabelGenerator:
         feature_dim: int = 32,
         hop_length: int = 32,
         sample_rate: int = 100,
+        feature_mode: FEATURE_MODES = "spectrogram",
+        include_stalta: bool = False,
+        include_frequency_bands: bool = False,
+        include_multichannel: bool = False,
     ):
+        """
+        Initialize the ClusterLabelGenerator.
+        
+        Parameters
+        ----------
+        n_clusters : int
+            Number of K-means clusters (target vocabulary size)
+        feature_dim : int
+            Feature dimension for spectrogram (n_mels)
+        hop_length : int
+            Hop length between frames in samples
+        sample_rate : int
+            Sample rate in Hz
+        feature_mode : str
+            Feature extraction mode: "spectrogram", "stalta", "frequency_bands",
+            "multi_channel", or "combined"
+        include_stalta : bool
+            Include STA/LTA features when feature_mode="combined"
+        include_frequency_bands : bool
+            Include frequency band features when feature_mode="combined"
+        include_multichannel : bool
+            Include polarization features when feature_mode="combined"
+        """
         self.n_clusters = n_clusters
         self.feature_dim = feature_dim
         self.hop_length = hop_length
         self.sample_rate = sample_rate
+        self.feature_mode = feature_mode
+        self.include_stalta = include_stalta
+        self.include_frequency_bands = include_frequency_bands
+        self.include_multichannel = include_multichannel
         self.kmeans: Optional[MiniBatchKMeans] = None
         self._fitted = False
     
     def extract_features(self, waveform: np.ndarray) -> np.ndarray:
-        """Extract features from a single waveform."""
-        return extract_spectrogram_features(
-            waveform,
-            sample_rate=self.sample_rate,
-            n_fft=self.feature_dim * 2,
-            hop_length=self.hop_length,
-            n_mels=self.feature_dim,
-        )
+        """
+        Extract features from a single waveform based on feature_mode.
+        
+        Parameters
+        ----------
+        waveform : np.ndarray
+            Input waveform of shape (channels, samples) or (samples,)
+        
+        Returns
+        -------
+        np.ndarray
+            Features of shape (frames, features)
+        """
+        if self.feature_mode == "spectrogram":
+            return extract_spectrogram_features(
+                waveform,
+                sample_rate=self.sample_rate,
+                n_fft=self.feature_dim * 2,
+                hop_length=self.hop_length,
+                n_mels=self.feature_dim,
+            )
+        elif self.feature_mode == "stalta":
+            return extract_stalta_features(
+                waveform,
+                sample_rate=self.sample_rate,
+                hop_length=self.hop_length,
+            )
+        elif self.feature_mode == "frequency_bands":
+            return extract_frequency_band_features(
+                waveform,
+                sample_rate=self.sample_rate,
+                hop_length=self.hop_length,
+            )
+        elif self.feature_mode == "multi_channel":
+            return extract_multichannel_features(
+                waveform,
+                sample_rate=self.sample_rate,
+                hop_length=self.hop_length,
+            )
+        elif self.feature_mode == "combined":
+            return extract_combined_features(
+                waveform,
+                sample_rate=self.sample_rate,
+                hop_length=self.hop_length,
+                include_spectrogram=True,
+                include_stalta=self.include_stalta,
+                include_frequency_bands=self.include_frequency_bands,
+                include_multichannel=self.include_multichannel,
+                n_fft=self.feature_dim * 2,
+                n_mels=self.feature_dim,
+            )
+        else:
+            raise ValueError(f"Unknown feature_mode: {self.feature_mode}")
     
     def fit(
         self,
@@ -228,6 +635,10 @@ class ClusterLabelGenerator:
                 "feature_dim": self.feature_dim,
                 "hop_length": self.hop_length,
                 "sample_rate": self.sample_rate,
+                "feature_mode": self.feature_mode,
+                "include_stalta": self.include_stalta,
+                "include_frequency_bands": self.include_frequency_bands,
+                "include_multichannel": self.include_multichannel,
                 "kmeans": self.kmeans,
             }, f)
     
@@ -243,6 +654,10 @@ class ClusterLabelGenerator:
             feature_dim=data["feature_dim"],
             hop_length=data["hop_length"],
             sample_rate=data["sample_rate"],
+            feature_mode=data.get("feature_mode", "spectrogram"),
+            include_stalta=data.get("include_stalta", False),
+            include_frequency_bands=data.get("include_frequency_bands", False),
+            include_multichannel=data.get("include_multichannel", False),
         )
         instance.kmeans = data["kmeans"]
         instance._fitted = True

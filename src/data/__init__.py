@@ -23,6 +23,10 @@ from .utils import (
 from .clustering import (
     ClusterLabelGenerator,
     extract_spectrogram_features,
+    extract_stalta_features,
+    extract_frequency_band_features,
+    extract_multichannel_features,
+    extract_combined_features,
     align_labels_to_features,
 )
 
@@ -41,5 +45,9 @@ __all__ = [
     "plot_waveform_batch",
     "ClusterLabelGenerator",
     "extract_spectrogram_features",
+    "extract_stalta_features",
+    "extract_frequency_band_features",
+    "extract_multichannel_features",
+    "extract_combined_features",
     "align_labels_to_features",
 ]
