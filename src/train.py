@@ -28,7 +28,7 @@ from models.seismic_hubert import (
 def compute_mask_indices(
     shape: tuple[int, int],
     mask_prob: float,
-    mask_length: int,
+    mask_length: int | list[int] | torch.Tensor,
     device: torch.device,
 ) -> torch.Tensor:
     """
@@ -40,8 +40,9 @@ def compute_mask_indices(
         (batch_size, sequence_length)
     mask_prob : float
         Probability of masking each position
-    mask_length : int
-        Length of each mask span
+    mask_length : int or list[int] or torch.Tensor
+        Length of each mask span. Can be a single value for all samples,
+        or per-sample values for distance-adaptive masking.
     device : torch.device
         Device to create tensor on
     
@@ -54,16 +55,72 @@ def compute_mask_indices(
     
     mask = torch.zeros(batch_size, seq_length, dtype=torch.bool, device=device)
     
-    num_masked_spans = max(1, int(mask_prob * seq_length / mask_length))
+    # Handle per-sample mask lengths
+    if isinstance(mask_length, (list, torch.Tensor)):
+        mask_lengths = mask_length if isinstance(mask_length, list) else mask_length.tolist()
+    else:
+        mask_lengths = [mask_length] * batch_size
     
     for batch_idx in range(batch_size):
+        ml = int(mask_lengths[batch_idx])
+        num_masked_spans = max(1, int(mask_prob * seq_length / ml))
+        
         span_starts = torch.randint(
-            0, max(1, seq_length - mask_length), (num_masked_spans,)
+            0, max(1, seq_length - ml), (num_masked_spans,)
         )
         for start in span_starts:
-            mask[batch_idx, start : start + mask_length] = True
+            mask[batch_idx, start : start + ml] = True
     
     return mask
+
+
+def compute_distance_adaptive_mask_length(
+    distances_km: torch.Tensor,
+    min_mask: int = 2,
+    max_mask: int = 15,
+    min_distance: float = 10.0,
+    max_distance: float = 200.0,
+) -> torch.Tensor:
+    """
+    Compute mask length based on source distance.
+    
+    Closer events have shorter P-to-S intervals, so they need shorter masks.
+    P-to-S time ≈ distance / 8 km/s (rough approximation).
+    
+    Parameters
+    ----------
+    distances_km : torch.Tensor
+        Source distances in km. Negative values indicate noise (no distance).
+    min_mask : int
+        Minimum mask length (for closest events)
+    max_mask : int
+        Maximum mask length (for distant events)
+    min_distance : float
+        Distance below which min_mask is used
+    max_distance : float
+        Distance above which max_mask is used
+    
+    Returns
+    -------
+    torch.Tensor
+        Per-sample mask lengths
+    """
+    # Clamp distances to valid range
+    distances = distances_km.clone()
+    
+    # For noise samples (distance < 0), use middle mask length
+    noise_mask = distances < 0
+    distances = distances.clamp(min_distance, max_distance)
+    
+    # Linear interpolation based on distance
+    progress = (distances - min_distance) / (max_distance - min_distance)
+    mask_lengths = min_mask + progress * (max_mask - min_mask)
+    
+    # Noise samples get average mask length
+    avg_mask = (min_mask + max_mask) / 2
+    mask_lengths[noise_mask] = avg_mask
+    
+    return mask_lengths.round().int()
 
 
 class STEADDataModule(pl.LightningDataModule):
@@ -155,6 +212,13 @@ class SeismicHubertLightning(pl.LightningModule):
         weight_decay: float = 0.01,
         warmup_steps: int = 1000,
         max_steps: int = 100000,
+        max_epochs: int = 100,
+        mask_length_start: int | None = None,
+        mask_length_end: int | None = None,
+        mask_schedule: str = "constant",
+        distance_adaptive_mask: bool = False,
+        distance_mask_min: int = 2,
+        distance_mask_max: int = 15,
     ):
         super().__init__()
         self.save_hyperparameters(ignore=["config", "label_generator"])
@@ -165,6 +229,18 @@ class SeismicHubertLightning(pl.LightningModule):
         self.weight_decay = weight_decay
         self.warmup_steps = warmup_steps
         self.max_steps = max_steps
+        self.max_epochs = max_epochs
+        
+        # Mask scheduling (epoch-based)
+        self.mask_schedule = mask_schedule
+        self.mask_length_start = mask_length_start or config.mask_length
+        self.mask_length_end = mask_length_end or config.mask_length
+        self._current_mask_length = self.mask_length_start
+        
+        # Distance-adaptive masking (per-sample)
+        self.distance_adaptive_mask = distance_adaptive_mask
+        self.distance_mask_min = distance_mask_min
+        self.distance_mask_max = distance_mask_max
         
         self.model = SeismicHubertForPreTraining(config)
     
@@ -176,6 +252,44 @@ class SeismicHubertLightning(pl.LightningModule):
             mask_time_indices=mask_time_indices,
         )
     
+    def get_current_mask_length(self) -> int:
+        """Compute mask length based on schedule and current epoch."""
+        if self.mask_schedule == "constant":
+            return self.mask_length_start
+        
+        # Get progress through training (0.0 to 1.0)
+        current_epoch = self.current_epoch
+        progress = min(1.0, current_epoch / max(1, self.max_epochs - 1))
+        
+        if self.mask_schedule == "linear":
+            # Linear interpolation from start to end
+            mask_length = self.mask_length_start + progress * (
+                self.mask_length_end - self.mask_length_start
+            )
+        elif self.mask_schedule == "step":
+            # Step schedule: 3 stages at 0%, 33%, 66%
+            if progress < 0.33:
+                mask_length = self.mask_length_start
+            elif progress < 0.66:
+                mask_length = (self.mask_length_start + self.mask_length_end) / 2
+            else:
+                mask_length = self.mask_length_end
+        elif self.mask_schedule == "cosine":
+            # Cosine schedule: slower at start and end
+            cosine_progress = 0.5 * (1 - np.cos(np.pi * progress))
+            mask_length = self.mask_length_start + cosine_progress * (
+                self.mask_length_end - self.mask_length_start
+            )
+        else:
+            mask_length = self.mask_length_start
+        
+        return max(1, int(round(mask_length)))
+    
+    def on_train_epoch_start(self):
+        """Update mask length at the start of each epoch."""
+        self._current_mask_length = self.get_current_mask_length()
+        self.log("mask_length", float(self._current_mask_length), prog_bar=True)
+    
     def _shared_step(self, batch, batch_idx):
         """Shared logic for training and validation steps."""
         waveforms = batch["input_values"]
@@ -186,11 +300,35 @@ class SeismicHubertLightning(pl.LightningModule):
             features, _ = self.model.hubert.feature_encoder(waveforms, attention_mask)
             seq_length = features.shape[1]
         
+        # Determine mask length(s)
+        if self.distance_adaptive_mask and "source_distance_km" in batch:
+            # Per-sample mask lengths based on distance
+            distances = batch["source_distance_km"]
+            
+            # Scale distance-based masks by epoch progress (curriculum)
+            if self.mask_schedule != "constant":
+                epoch_progress = min(1.0, self.current_epoch / max(1, self.max_epochs - 1))
+                # Scale the max mask length based on epoch progress
+                current_max = self.distance_mask_min + epoch_progress * (
+                    self.distance_mask_max - self.distance_mask_min
+                )
+            else:
+                current_max = self.distance_mask_max
+            
+            mask_lengths = compute_distance_adaptive_mask_length(
+                distances,
+                min_mask=self.distance_mask_min,
+                max_mask=int(current_max),
+            )
+        else:
+            # Single mask length for all samples
+            mask_lengths = self._current_mask_length
+        
         # Compute mask indices
         mask_indices = compute_mask_indices(
             (waveforms.shape[0], seq_length),
             self.config.mask_prob,
-            self.config.mask_length,
+            mask_lengths,
             waveforms.device,
         )
         
@@ -281,6 +419,25 @@ def parse_args():
         help="Number of K-means clusters for targets"
     )
     
+    # Clustering feature arguments (domain-specific)
+    parser.add_argument(
+        "--feature_mode", type=str, default="spectrogram",
+        choices=["spectrogram", "stalta", "frequency_bands", "multi_channel", "combined"],
+        help="Feature extraction mode for K-means clustering"
+    )
+    parser.add_argument(
+        "--include_stalta", action="store_true",
+        help="Include STA/LTA features (when feature_mode=combined)"
+    )
+    parser.add_argument(
+        "--include_frequency_bands", action="store_true",
+        help="Include frequency band features (when feature_mode=combined)"
+    )
+    parser.add_argument(
+        "--include_multichannel", action="store_true",
+        help="Include polarization features (when feature_mode=combined, requires channel=all)"
+    )
+    
     # Training arguments
     parser.add_argument("--batch_size", type=int, default=16, help="Batch size")
     parser.add_argument("--lr", type=float, default=5e-5, help="Learning rate")
@@ -295,7 +452,33 @@ def parse_args():
         "--mask_prob", type=float, default=0.08, help="Masking probability"
     )
     parser.add_argument(
-        "--mask_length", type=int, default=10, help="Mask span length"
+        "--mask_length", type=int, default=5,
+        help="Mask span length in frames (~0.32s each). Used when mask_schedule=constant."
+    )
+    parser.add_argument(
+        "--mask_length_start", type=int, default=3,
+        help="Starting mask length for scheduled masking"
+    )
+    parser.add_argument(
+        "--mask_length_end", type=int, default=12,
+        help="Ending mask length for scheduled masking"
+    )
+    parser.add_argument(
+        "--mask_schedule", type=str, default="constant",
+        choices=["constant", "linear", "step", "cosine"],
+        help="Mask length schedule: constant, linear, step (3 stages), or cosine"
+    )
+    parser.add_argument(
+        "--distance_adaptive_mask", action="store_true",
+        help="Enable per-sample mask length based on source distance"
+    )
+    parser.add_argument(
+        "--distance_mask_min", type=int, default=2,
+        help="Minimum mask length for close events (distance-adaptive)"
+    )
+    parser.add_argument(
+        "--distance_mask_max", type=int, default=15,
+        help="Maximum mask length for distant events (distance-adaptive)"
     )
     parser.add_argument(
         "--gradient_clip_val", type=float, default=1.0, help="Gradient clipping value"
@@ -381,7 +564,12 @@ def main():
             feature_dim=32,
             hop_length=32,
             sample_rate=100,
+            feature_mode=args.feature_mode,
+            include_stalta=args.include_stalta,
+            include_frequency_bands=args.include_frequency_bands,
+            include_multichannel=args.include_multichannel,
         )
+        print(f"Using feature mode: {args.feature_mode}")
         label_generator.fit(kmeans_loader, max_samples=min(10000, len(data_module.train_dataset)))
         label_generator.save(kmeans_path)
         print(f"K-means model saved to {kmeans_path}")
@@ -404,6 +592,19 @@ def main():
     steps_per_epoch = len(data_module.train_dataset) // (args.batch_size * args.accumulate_grad_batches)
     max_steps = steps_per_epoch * args.max_epochs
     
+    # Determine mask length parameters
+    if args.mask_schedule == "constant" and not args.distance_adaptive_mask:
+        mask_start = args.mask_length
+        mask_end = args.mask_length
+    else:
+        mask_start = args.mask_length_start
+        mask_end = args.mask_length_end
+        if args.mask_schedule != "constant":
+            print(f"Mask scheduling: {args.mask_schedule} from {mask_start} to {mask_end} frames")
+    
+    if args.distance_adaptive_mask:
+        print(f"Distance-adaptive masking: {args.distance_mask_min}-{args.distance_mask_max} frames")
+    
     model = SeismicHubertLightning(
         config=config,
         label_generator=label_generator,
@@ -411,6 +612,13 @@ def main():
         weight_decay=args.weight_decay,
         warmup_steps=args.warmup_steps,
         max_steps=max_steps,
+        max_epochs=args.max_epochs,
+        mask_length_start=mask_start,
+        mask_length_end=mask_end,
+        mask_schedule=args.mask_schedule,
+        distance_adaptive_mask=args.distance_adaptive_mask,
+        distance_mask_min=args.distance_mask_min,
+        distance_mask_max=args.distance_mask_max,
     )
     
     total_params = sum(p.numel() for p in model.parameters())
