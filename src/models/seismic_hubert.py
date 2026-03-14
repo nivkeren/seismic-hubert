@@ -47,8 +47,8 @@ class SeismicHubertConfig:
     
     # HuBERT-specific
     num_clusters: int = 100  # K-means clusters for masked prediction
-    mask_prob: float = 0.065  # ~65% of frames masked (HuBERT default)
-    mask_length: int = 10  # Consecutive frames to mask
+    mask_prob: float = 0.065  # ~6.5% of frames are mask start points
+    mask_length: int = 5  # Consecutive frames to mask (~1.6 sec at 32x stride)
     
     # Pretrained model (optional - not recommended for seismic)
     pretrained_model: str | None = None
