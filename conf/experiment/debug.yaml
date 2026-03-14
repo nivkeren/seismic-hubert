@@ -1,0 +1,14 @@
+# @package _global_
+# Minimal config for quick debugging
+
+data:
+  max_samples: 100
+
+training:
+  batch_size: 4
+  max_epochs: 2
+  num_workers: 0
+  accelerator: "cpu"
+
+logging:
+  run_name: "debug"

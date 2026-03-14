@@ -44,83 +44,86 @@ Place both files in the `STEAD/` directory.
 
 ### Training
 
-#### Using Config Files (Recommended)
+Training is configured using [Hydra](https://hydra.cc/), which provides hierarchical YAML configs with command-line overrides.
+
+#### Basic Usage
 
 ```bash
 cd src
-python train.py --config ../config/default.yaml
+
+# Use default configuration
+python train.py
+
+# Use an experiment preset
+python train.py +experiment=overfit     # Quick test on small dataset
+python train.py +experiment=advanced    # All domain-specific features
+python train.py +experiment=debug       # Minimal config for debugging
 ```
 
-Config files use YAML format with all training options. CLI arguments override config values:
+#### Override Any Parameter
 
 ```bash
-python train.py --config ../config/advanced.yaml --max_epochs 50 --batch_size 32
+# Override single values
+python train.py training.max_epochs=50 training.batch_size=32
+
+# Override multiple values
+python train.py data.channel=all clustering.feature_mode=combined
+
+# Combine experiment preset with overrides
+python train.py +experiment=advanced training.accelerator=cpu
 ```
 
-See `config/default.yaml` for basic settings and `config/advanced.yaml` for all domain-specific features enabled.
-
-#### Using CLI Arguments Only
+#### Hyperparameter Sweeps
 
 ```bash
-python train.py --hdf5_path ../STEAD/merge.hdf5 --csv_path ../STEAD/merge.csv
+# Sweep over learning rates
+python train.py --multirun training.lr=1e-4,5e-5,1e-5
+
+# Grid search
+python train.py --multirun training.lr=1e-4,5e-5 model.num_layers=6,12
 ```
 
-With domain-specific feature modes:
+#### Configuration Structure
 
-```bash
-python train.py \
-    --hdf5_path ../STEAD/merge.hdf5 \
-    --csv_path ../STEAD/merge.csv \
-    --channel all \
-    --feature_mode combined \
-    --include_stalta \
-    --include_frequency_bands \
-    --include_multichannel \
-    --mlflow
+```
+conf/
+├── config.yaml      # All settings in one flat file
+└── experiment/
+    ├── overfit.yaml  # Quick convergence test
+    ├── advanced.yaml # Full features enabled
+    └── debug.yaml    # Minimal for debugging
 ```
 
-Full options with automatic mask scheduling:
+#### Key Configuration Options
 
-```bash
-python train.py \
-    --hdf5_path ../STEAD/merge.hdf5 \
-    --csv_path ../STEAD/merge.csv \
-    --channel all \
-    --batch_size 16 \
-    --max_epochs 100 \
-    --lr 5e-5 \
-    --feature_mode combined \
-    --include_stalta \
-    --num_clusters 200 \
-    --mask_prob 0.08 \
-    --mask_schedule linear \
-    --mask_length_start 3 \
-    --mask_length_end 12 \
-    --accelerator gpu \
-    --precision 16-mixed \
-    --mlflow
+| Config Path | Default | Description |
+|------------|---------|-------------|
+| `data.channel` | `Z` | Channels: `Z` (vertical) or `all` (E/N/Z) |
+| `data.max_samples` | null | Limit samples (null = all) |
+| `model.num_clusters` | 100 | K-means vocabulary size |
+| `clustering.feature_mode` | `spectrogram` | `spectrogram`, `stalta`, `combined`, etc. |
+| `masking.mask_length` | 5 | Fixed mask length (frames) |
+| `masking.schedule` | `constant` | `constant`, `linear`, `step`, `cosine` |
+| `masking.distance_adaptive` | false | Per-sample mask based on distance |
+| `training.accelerator` | `auto` | `auto`, `cpu`, `gpu`, `mps` |
+| `training.precision` | `32` | `32`, `16-mixed`, `bf16-mixed` |
+| `logging.logger` | `tensorboard` | `tensorboard`, `mlflow`, or `wandb` |
+| `logging.run_name` | null | Name for this run |
+
+#### Output Directory
+
+Hydra automatically creates timestamped output directories:
+
 ```
-
-#### Training Arguments
-
-| Argument | Default | Description |
-|----------|---------|-------------|
-| `--channel` | `Z` | Channels to use: `Z` (vertical only) or `all` (E/N/Z) |
-| `--feature_mode` | `spectrogram` | Clustering features: `spectrogram`, `stalta`, `frequency_bands`, `multi_channel`, `combined` |
-| `--include_stalta` | false | Add STA/LTA features (with `--feature_mode combined`) |
-| `--include_frequency_bands` | false | Add band energy features (with `--feature_mode combined`) |
-| `--include_multichannel` | false | Add polarization features (with `--feature_mode combined`, requires `--channel all`) |
-| `--num_clusters` | 100 | K-means cluster count (vocabulary size) |
-| `--mask_prob` | 0.08 | Fraction of frames that start a mask span |
-| `--mask_length` | 5 | Fixed mask length (when `--mask_schedule constant`) |
-| `--mask_schedule` | `constant` | Schedule: `constant`, `linear`, `step`, `cosine` |
-| `--mask_length_start` | 3 | Starting mask length for scheduling |
-| `--mask_length_end` | 12 | Ending mask length for scheduling |
-| `--distance_adaptive_mask` | false | Enable per-sample mask based on source distance |
-| `--distance_mask_min` | 2 | Min mask for close events (distance-adaptive) |
-| `--distance_mask_max` | 15 | Max mask for distant events (distance-adaptive) |
-| `--mlflow` | false | Enable MLflow experiment tracking |
-| `--wandb` | false | Enable Weights & Biases logging |
+outputs/
+└── 2024-01-15/
+    └── 14-30-22/
+        ├── .hydra/          # Hydra internals
+        ├── config.yaml      # Resolved config
+        ├── kmeans.pkl       # K-means model
+        ├── checkpoints/     # Model checkpoints
+        └── tensorboard/     # Logs
+```
 
 ### Using the Dataset
 
@@ -186,6 +189,12 @@ print(f"Feature shape: {features.shape}")
 seismic-hubert/
 ├── pixi.toml                    # Environment and dependencies
 ├── README.md
+├── conf/                        # Hydra configuration
+│   ├── config.yaml             # All settings (flat file)
+│   └── experiment/             # Experiment presets
+│       ├── overfit.yaml
+│       ├── advanced.yaml
+│       └── debug.yaml
 ├── docs/
 │   └── normalization.md        # Normalization guide
 ├── notebooks/
@@ -193,10 +202,13 @@ seismic-hubert/
 ├── STEAD/                       # Dataset directory
 │   ├── merge.hdf5              # Waveform data
 │   └── merge.csv               # Metadata
+├── tests/                       # Unit tests
 └── src/
+    ├── train.py                # Training script (Hydra)
     ├── data/
     │   ├── __init__.py
     │   ├── stead_dataset.py    # STEAD PyTorch dataset
+    │   ├── clustering.py       # K-means feature extraction
     │   ├── utils.py            # Normalization functions
     │   └── visualization.py    # Plotting utilities
     └── models/
@@ -263,7 +275,7 @@ At 32x downsampling from 100 Hz input, each frame represents **0.32 seconds**.
 
 #### Automatic Mask Scheduling
 
-The training script supports automatic mask length scheduling with `--mask_schedule`:
+Override `masking.schedule` to enable curriculum learning:
 
 | Schedule | Behavior | Example (3→12 over 100 epochs) |
 |----------|----------|--------------------------------|
@@ -273,14 +285,11 @@ The training script supports automatic mask length scheduling with `--mask_sched
 | `cosine` | Slow start/end, faster middle | Smooth S-curve progression |
 
 ```bash
-# Enable linear mask scheduling from 3 to 12 frames
-python train.py \
-    --hdf5_path ../STEAD/merge.hdf5 \
-    --csv_path ../STEAD/merge.csv \
-    --mask_schedule linear \
-    --mask_length_start 3 \
-    --mask_length_end 12 \
-    --max_epochs 100
+# Enable linear mask scheduling
+python train.py masking.schedule=linear masking.mask_length_start=3 masking.mask_length_end=12
+
+# Or use the advanced preset which enables curriculum learning
+python train.py +experiment=advanced
 ```
 
 #### What the model learns at each stage:
@@ -304,19 +313,17 @@ Close earthquakes have shorter P-to-S intervals than distant ones:
 | 50 km | ~6 sec | 6-10 frames |
 | 100 km | ~12 sec | 10-15 frames |
 
-With `--distance_adaptive_mask`, each sample gets a mask length proportional to its source distance:
+With `masking.distance_adaptive=true`, each sample gets a mask length proportional to its source distance:
 
 ```bash
-python train.py \
-    --hdf5_path ../STEAD/merge.hdf5 \
-    --csv_path ../STEAD/merge.csv \
-    --distance_adaptive_mask \
-    --distance_mask_min 2 \
-    --distance_mask_max 15 \
-    --mask_schedule linear  # Optionally combine with epoch scheduling
+# Enable distance-adaptive masking
+python train.py masking.distance_adaptive=true
+
+# Or use the advanced preset which enables it
+python train.py +experiment=advanced
 ```
 
-**Combined with epoch scheduling:** When both `--distance_adaptive_mask` and `--mask_schedule` are used, the maximum mask length scales with epoch progress. This means:
+**Combined with epoch scheduling:** When both `distance_adaptive` and a non-constant `schedule` are used, the maximum mask length scales with epoch progress. This means:
 - Early epochs: close events get 2 frames, distant events get fewer than 15
 - Late epochs: close events still get 2 frames, but distant events get the full 15
 

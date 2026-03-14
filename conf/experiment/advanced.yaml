@@ -1,0 +1,28 @@
+# @package _global_
+# Full training with all domain-specific features
+
+data:
+  channel: "all"
+
+model:
+  num_clusters: 200
+
+clustering:
+  feature_mode: "combined"
+  include_stalta: true
+  include_frequency_bands: true
+  include_multichannel: true
+
+masking:
+  schedule: "linear"
+  mask_length_start: 3
+  mask_length_end: 12
+  distance_adaptive: true
+
+training:
+  accelerator: "gpu"
+  precision: "16-mixed"
+
+logging:
+  run_name: "advanced"
+  logger: "mlflow"
