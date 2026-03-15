@@ -48,11 +48,21 @@ Training is configured using [Hydra](https://hydra.cc/), which provides hierarch
 
 #### Basic Usage
 
-```bash
-cd src
+Commands work from both the project root and the `src/` directory:
 
-# Use default configuration
+```bash
+# Using pixi (from project root)
+pixi run train
+pixi run train -- +experiment=overfit
+
+# From project root
+python src/train.py
+python src/train.py +experiment=overfit
+
+# From src/ directory
+cd src
 python train.py
+python train.py +experiment=overfit
 
 # Use an experiment preset
 python train.py +experiment=overfit     # Quick test on small dataset

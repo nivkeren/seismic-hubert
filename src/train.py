@@ -1,16 +1,25 @@
 """
 Training script for Seismic HuBERT self-supervised pretraining.
 
-Usage:
-    python train.py                              # Use defaults
-    python train.py +experiment=overfit          # Use experiment preset
-    python train.py training.max_epochs=50       # Override any value
-    python train.py --multirun training.lr=1e-4,5e-5  # Hyperparameter sweep
+Usage (from project root or src/):
+    python src/train.py                              # From project root
+    python train.py                                  # From src/
+    python train.py +experiment=overfit              # Use experiment preset
+    python train.py training.max_epochs=50           # Override any value
+    python train.py --multirun training.lr=1e-4,5e-5 # Hyperparameter sweep
 """
 
 from __future__ import annotations
 
+import os
+import sys
 from pathlib import Path
+
+# Add src to path so imports work from any directory
+SCRIPT_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = SCRIPT_DIR.parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
 
 import hydra
 import numpy as np
@@ -297,14 +306,25 @@ def main(cfg: DictConfig) -> None:
     output_dir = Path(hydra.core.hydra_config.HydraConfig.get().runtime.output_dir)
     print(f"\nOutput directory: {output_dir}")
     
+    # Resolve data paths relative to project root
+    def resolve_path(path_str: str) -> str:
+        """Resolve path relative to project root if not absolute."""
+        p = Path(path_str)
+        if p.is_absolute():
+            return str(p)
+        return str(PROJECT_ROOT / p)
+    
+    hdf5_path = resolve_path(cfg.data.hdf5_path)
+    csv_path = resolve_path(cfg.data.csv_path)
+    
     # Save config
     OmegaConf.save(cfg, output_dir / "config.yaml")
     
     # ===== Data Module =====
     print("\nInitializing data module...")
     data_module = STEADDataModule(
-        hdf5_path=cfg.data.hdf5_path,
-        csv_path=cfg.data.csv_path,
+        hdf5_path=hdf5_path,
+        csv_path=csv_path,
         channel=cfg.data.channel,
         batch_size=cfg.training.batch_size,
         num_workers=cfg.training.num_workers,
@@ -450,7 +470,8 @@ def main(cfg: DictConfig) -> None:
     
     # ===== Train =====
     print(f"\nStarting training...")
-    trainer.fit(model, datamodule=data_module, ckpt_path=cfg.resume_from)
+    resume_ckpt = resolve_path(cfg.resume_from) if cfg.resume_from else None
+    trainer.fit(model, datamodule=data_module, ckpt_path=resume_ckpt)
     
     # Log artifacts for MLflow
     if cfg.logging.logger == "mlflow":

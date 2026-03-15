@@ -6,7 +6,7 @@ channels = ["conda-forge", "pytorch"]
 platforms = ["osx-arm64", "osx-64", "linux-64"]
 
 [tasks]
-train = "python -m seismic_hubert.train"
+train = "python src/train.py"
 explore = "jupyter lab"
 test = "pytest tests/ -v"
 
