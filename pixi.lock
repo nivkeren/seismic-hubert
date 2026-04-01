@@ -529,9 +529,11 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/zlib-ng-2.3.3-hceb46e0_1.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/zstd-1.5.7-hb78ec9c_6.conda
       - pypi: https://files.pythonhosted.org/packages/9f/d2/c581486aa6c4fbd7394c23c47b83fa1a919d34194e16944241daf9e762dd/accelerate-1.12.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/16/f4/4fcbebcbc42376a77e395a6838575950587e5eb82edf47d103f8daa7ba22/bottleneck-1.6.0-cp311-cp311-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/37/f0/99fe6eb530c7ee9ee1faee48059eb8a6437f80c893a496b98a78864e0fc6/datasets-4.6.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/50/3d/9373ad9c56321fdab5b41197068e1d8c25883b3fea29dd361f9b55116869/dill-0.4.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/4b/88/9039f2fed1012ef584751d4ceff9ab4a51e5ae264898f0b7cbf44340a859/multiprocess-0.70.18-py311-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/ac/b9/6f6846c34443f765b82dafc224241d4ee5e9f6c559f001883c83da14e7f3/seisbench-0.11.5-cp311-cp311-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/a5/86/cf2c0321dc3940a7aa73076f4fd677a0fb3e405cb297ead7d864fd90847e/xxhash-3.6.0-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
       osx-64:
       - conda: https://conda.anaconda.org/conda-forge/osx-64/_openmp_mutex-4.5-7_kmp_llvm.conda
@@ -985,9 +987,11 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/osx-64/zlib-ng-2.3.3-h8bce59a_1.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-64/zstd-1.5.7-h3eecb57_6.conda
       - pypi: https://files.pythonhosted.org/packages/9f/d2/c581486aa6c4fbd7394c23c47b83fa1a919d34194e16944241daf9e762dd/accelerate-1.12.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/14/d8/6d641573e210768816023a64966d66463f2ce9fc9945fa03290c8a18f87c/bottleneck-1.6.0.tar.gz
       - pypi: https://files.pythonhosted.org/packages/37/f0/99fe6eb530c7ee9ee1faee48059eb8a6437f80c893a496b98a78864e0fc6/datasets-4.6.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/50/3d/9373ad9c56321fdab5b41197068e1d8c25883b3fea29dd361f9b55116869/dill-0.4.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/4b/88/9039f2fed1012ef584751d4ceff9ab4a51e5ae264898f0b7cbf44340a859/multiprocess-0.70.18-py311-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/68/12/06b770c07464bd913685071502158dbc3fffb70797b139ccdc31cab6c5c0/seisbench-0.11.5.tar.gz
       - pypi: https://files.pythonhosted.org/packages/17/d4/cc2f0400e9154df4b9964249da78ebd72f318e35ccc425e9f403c392f22a/xxhash-3.6.0-cp311-cp311-macosx_10_9_x86_64.whl
       osx-arm64:
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/_openmp_mutex-4.5-7_kmp_llvm.conda
@@ -1444,9 +1448,11 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/zlib-ng-2.3.3-hed4e4f5_1.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/zstd-1.5.7-hbf9d68e_6.conda
       - pypi: https://files.pythonhosted.org/packages/9f/d2/c581486aa6c4fbd7394c23c47b83fa1a919d34194e16944241daf9e762dd/accelerate-1.12.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/83/96/9d51012d729f97de1e75aad986f3ba50956742a40fc99cbab4c2aa896c1c/bottleneck-1.6.0-cp311-cp311-macosx_11_0_arm64.whl
       - pypi: https://files.pythonhosted.org/packages/37/f0/99fe6eb530c7ee9ee1faee48059eb8a6437f80c893a496b98a78864e0fc6/datasets-4.6.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/50/3d/9373ad9c56321fdab5b41197068e1d8c25883b3fea29dd361f9b55116869/dill-0.4.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/4b/88/9039f2fed1012ef584751d4ceff9ab4a51e5ae264898f0b7cbf44340a859/multiprocess-0.70.18-py311-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/0f/b4/7c6845605e597a21a09dedd23fbd0c679f904aaa4db0dc90cec66ffc172b/seisbench-0.11.5-cp311-cp311-macosx_11_0_arm64.whl
       - pypi: https://files.pythonhosted.org/packages/5e/ec/1cc11cd13e26ea8bc3cb4af4eaadd8d46d5014aebb67be3f71fb0b68802a/xxhash-3.6.0-cp311-cp311-macosx_11_0_arm64.whl
 packages:
 - conda: https://conda.anaconda.org/conda-forge/linux-64/_openmp_mutex-4.5-7_kmp_llvm.conda
@@ -2775,6 +2781,36 @@ packages:
   - pkg:pypi/blinker?source=hash-mapping
   size: 13934
   timestamp: 1731096548765
+- pypi: https://files.pythonhosted.org/packages/14/d8/6d641573e210768816023a64966d66463f2ce9fc9945fa03290c8a18f87c/bottleneck-1.6.0.tar.gz
+  name: bottleneck
+  version: 1.6.0
+  sha256: 028d46ee4b025ad9ab4d79924113816f825f62b17b87c9e1d0d8ce144a4a0e31
+  requires_dist:
+  - numpy
+  - numpydoc ; extra == 'doc'
+  - sphinx ; extra == 'doc'
+  - gitpython ; extra == 'doc'
+  requires_python: '>=3.10'
+- pypi: https://files.pythonhosted.org/packages/16/f4/4fcbebcbc42376a77e395a6838575950587e5eb82edf47d103f8daa7ba22/bottleneck-1.6.0-cp311-cp311-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl
+  name: bottleneck
+  version: 1.6.0
+  sha256: 727363f99edc6dc83d52ed28224d4cb858c07a01c336c7499c0c2e5dd4fd3e4a
+  requires_dist:
+  - numpy
+  - numpydoc ; extra == 'doc'
+  - sphinx ; extra == 'doc'
+  - gitpython ; extra == 'doc'
+  requires_python: '>=3.10'
+- pypi: https://files.pythonhosted.org/packages/83/96/9d51012d729f97de1e75aad986f3ba50956742a40fc99cbab4c2aa896c1c/bottleneck-1.6.0-cp311-cp311-macosx_11_0_arm64.whl
+  name: bottleneck
+  version: 1.6.0
+  sha256: 69ef4514782afe39db2497aaea93b1c167ab7ab3bc5e3930500ef9cf11841db7
+  requires_dist:
+  - numpy
+  - numpydoc ; extra == 'doc'
+  - sphinx ; extra == 'doc'
+  - gitpython ; extra == 'doc'
+  requires_python: '>=3.10'
 - conda: https://conda.anaconda.org/conda-forge/linux-64/brotli-1.2.0-hed03a55_1.conda
   sha256: e511644d691f05eb12ebe1e971fd6dc3ae55a4df5c253b4e1788b789bdf2dfa6
   md5: 8ccf913aaba749a5496c17629d859ed1
@@ -13602,6 +13638,75 @@ packages:
   - pkg:pypi/seaborn?source=hash-mapping
   size: 227843
   timestamp: 1733730112409
+- pypi: https://files.pythonhosted.org/packages/0f/b4/7c6845605e597a21a09dedd23fbd0c679f904aaa4db0dc90cec66ffc172b/seisbench-0.11.5-cp311-cp311-macosx_11_0_arm64.whl
+  name: seisbench
+  version: 0.11.5
+  sha256: 6d346b67e89854af3756ef6cffac48c9c48582b0bfa792d70641515948eb9c85
+  requires_dist:
+  - numpy>=1.21.6
+  - pandas>=1.1
+  - h5py>=3.1
+  - obspy>=1.3.1
+  - tqdm>=4.52
+  - torch>=1.10.0
+  - scipy>=1.9
+  - nest-asyncio>=1.5.3
+  - bottleneck>=1.3
+  - typing-extensions>=4.0
+  - xdas>=0.2.3 ; extra == 'das'
+  - pyarrow ; extra == 'das'
+  - ruff ; extra == 'dev'
+  - pre-commit ; extra == 'dev'
+  - pytest ; extra == 'tests'
+  - pytest-asyncio>=0.26.0 ; extra == 'tests'
+  - pytest-benchmark ; extra == 'tests'
+  requires_python: '>=3.10'
+- pypi: https://files.pythonhosted.org/packages/68/12/06b770c07464bd913685071502158dbc3fffb70797b139ccdc31cab6c5c0/seisbench-0.11.5.tar.gz
+  name: seisbench
+  version: 0.11.5
+  sha256: 6da728124c2129bc90ebd7fcdb7c60c694abf57da3c089f6c9cd2876a7d24569
+  requires_dist:
+  - numpy>=1.21.6
+  - pandas>=1.1
+  - h5py>=3.1
+  - obspy>=1.3.1
+  - tqdm>=4.52
+  - torch>=1.10.0
+  - scipy>=1.9
+  - nest-asyncio>=1.5.3
+  - bottleneck>=1.3
+  - typing-extensions>=4.0
+  - xdas>=0.2.3 ; extra == 'das'
+  - pyarrow ; extra == 'das'
+  - ruff ; extra == 'dev'
+  - pre-commit ; extra == 'dev'
+  - pytest ; extra == 'tests'
+  - pytest-asyncio>=0.26.0 ; extra == 'tests'
+  - pytest-benchmark ; extra == 'tests'
+  requires_python: '>=3.10'
+- pypi: https://files.pythonhosted.org/packages/ac/b9/6f6846c34443f765b82dafc224241d4ee5e9f6c559f001883c83da14e7f3/seisbench-0.11.5-cp311-cp311-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl
+  name: seisbench
+  version: 0.11.5
+  sha256: 948443301970df5602b0034b958e19f07de018e7616f7cafd0e260ba333369e3
+  requires_dist:
+  - numpy>=1.21.6
+  - pandas>=1.1
+  - h5py>=3.1
+  - obspy>=1.3.1
+  - tqdm>=4.52
+  - torch>=1.10.0
+  - scipy>=1.9
+  - nest-asyncio>=1.5.3
+  - bottleneck>=1.3
+  - typing-extensions>=4.0
+  - xdas>=0.2.3 ; extra == 'das'
+  - pyarrow ; extra == 'das'
+  - ruff ; extra == 'dev'
+  - pre-commit ; extra == 'dev'
+  - pytest ; extra == 'tests'
+  - pytest-asyncio>=0.26.0 ; extra == 'tests'
+  - pytest-benchmark ; extra == 'tests'
+  requires_python: '>=3.10'
 - conda: https://conda.anaconda.org/conda-forge/noarch/send2trash-2.1.0-pyh5552912_1.conda
   sha256: 8fc024bf1a7b99fc833b131ceef4bef8c235ad61ecb95a71a6108be2ccda63e8
   md5: b70e2d44e6aa2beb69ba64206a16e4c6

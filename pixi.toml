@@ -42,3 +42,4 @@ omegaconf = ">=2.3"
 [pypi-dependencies]
 datasets = "*"
 accelerate = "*"
+seisbench = ">=0.4"
