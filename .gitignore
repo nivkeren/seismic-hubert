@@ -4,10 +4,10 @@ __pycache__/
 .pytest_cache/
 .vscode/
 .idea/
-.pytest_cache/
-.pytest_cache/
 *.hdf5
 STEAD/merge.csv
 
-*/outputs/
-*/mlruns/
+# Data and output directories
+/data/
+/outputs/
+/mlruns/
