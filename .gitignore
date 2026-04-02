@@ -7,6 +7,7 @@ __pycache__/
 .pytest_cache/
 .pytest_cache/
 *.hdf5
+STEAD/merge.csv
 
 */outputs/
 */mlruns/
