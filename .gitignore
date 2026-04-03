@@ -5,7 +5,6 @@ __pycache__/
 .vscode/
 .idea/
 *.hdf5
-STEAD/merge.csv
 
 # Data and output directories
 /data/

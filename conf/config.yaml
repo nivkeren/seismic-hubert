@@ -18,8 +18,8 @@ model:
 
 # Data loading
 data:
-  hdf5_path: "STEAD/merge.hdf5"
-  csv_path: "STEAD/merge.csv"
+  hdf5_path: "data/STEAD/merge.hdf5"
+  csv_path: "data/STEAD/merge.csv"
   channel: "Z"  # "Z" or "all"
   max_samples: null
   norm_mode: "zscore"

@@ -2,7 +2,7 @@
 # Quick convergence test on small dataset (CPU)
 
 data:
-  max_samples: 500
+  max_samples: 200
 
 training:
   batch_size: 8
