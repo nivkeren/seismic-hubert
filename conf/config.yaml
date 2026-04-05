@@ -20,7 +20,7 @@ model:
 data:
   hdf5_path: "data/STEAD/merge.hdf5"
   csv_path: "data/STEAD/merge.csv"
-  channel: "Z"  # "Z" or "all"
+  channel: "all"  # "Z" or "all"
   max_samples: null
   norm_mode: "zscore"
   highpass_freq: 1.0
@@ -49,16 +49,16 @@ masking:
 
 # Training hyperparameters
 training:
-  batch_size: 16
+  batch_size: 128 #16
   lr: 5.0e-5
   weight_decay: 0.01
   max_epochs: 100
   warmup_steps: 1000
   accumulate_grad_batches: 4
   gradient_clip_val: 1.0
-  num_workers: 4
+  num_workers: 16
   accelerator: "auto"
-  devices: 1
+  devices: 4
   precision: "32"
   seed: 42
 

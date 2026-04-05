@@ -5,6 +5,9 @@ description = "Self-supervised learning for seismic data using HuBERT architectu
 channels = ["conda-forge", "pytorch"]
 platforms = ["osx-arm64", "osx-64", "linux-64"]
 
+[system-requirements]
+cuda = "12.4"
+
 [tasks]
 train = "python src/train.py"
 explore = "jupyter lab"
@@ -38,6 +41,8 @@ pytest = "*"
 pyyaml = ">=6.0.3,<7"
 hydra-core = ">=1.3"
 omegaconf = ">=2.3"
+psutil = "*"
+pynvml = "*"
 
 [pypi-dependencies]
 datasets = "*"

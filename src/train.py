@@ -269,7 +269,7 @@ class SeismicHubertLightning(pl.LightningModule):
     
     def validation_step(self, batch, batch_idx):
         loss = self._shared_step(batch, batch_idx)
-        self.log("val_loss", loss, on_step=False, on_epoch=True, prog_bar=True)
+        self.log("val_loss", loss, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
         return loss
     
     def configure_optimizers(self):
@@ -432,6 +432,9 @@ def main(cfg: DictConfig) -> None:
     
     # ===== Logger =====
     if cfg.logging.logger == "mlflow":
+        import mlflow
+        mlflow.enable_system_metrics_logging()
+        
         logger = MLFlowLogger(
             experiment_name=cfg.logging.mlflow_experiment,
             tracking_uri=cfg.logging.mlflow_tracking_uri,
