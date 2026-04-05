@@ -14,7 +14,7 @@ import torch
 from torch.utils.data import Dataset
 from pathlib import Path
 from typing import Literal, Optional
-from data.utils import (
+from .utils import (
     normalize_waveform, 
     apply_filter,
     log_compress,
@@ -125,12 +125,18 @@ class STEADDataset(Dataset):
         min_magnitude: float | None = None,
         max_distance_km: float | None = None,
         transform=None,
+        # Phase picking specific
+        return_phase_labels: bool = False,
+        label_sigma: float = 10.0,
     ):
         self.hdf5_path = Path(hdf5_path)
         self.csv_path = Path(csv_path)
         self.channel = channel
         self.trace_category = trace_category
         self.transform = transform
+        
+        self.return_phase_labels = return_phase_labels
+        self.label_sigma = label_sigma
         
         # Normalization mode
         self.norm_mode = norm_mode
@@ -284,17 +290,31 @@ class STEADDataset(Dataset):
         
         metadata = self.metadata.iloc[idx]
         
-        return {
+        p_arrival = _safe_int(metadata.get("p_arrival_sample"))
+        s_arrival = _safe_int(metadata.get("s_arrival_sample"))
+        
+        result = {
             "waveform": waveform,
             "trace_name": trace_name,
             "trace_category": metadata["trace_category"],
-            "p_arrival_sample": _safe_int(metadata.get("p_arrival_sample")),
-            "s_arrival_sample": _safe_int(metadata.get("s_arrival_sample")),
+            "p_arrival_sample": p_arrival,
+            "s_arrival_sample": s_arrival,
             "source_magnitude": _safe_float(metadata.get("source_magnitude")),
             "source_distance_km": _safe_float(metadata.get("source_distance_km")),
             "source_depth_km": _safe_float(metadata.get("source_depth_km")),
             "amplitude_stats": amplitude_stats,
         }
+        
+        if self.return_phase_labels:
+            phase_labels = generate_phase_labels(
+                seq_len=waveform.shape[-1],
+                p_sample=p_arrival,
+                s_sample=s_arrival,
+                sigma=self.label_sigma,
+            )
+            result["phase_labels"] = torch.from_numpy(phase_labels)
+            
+        return result
     
     def __del__(self):
         if self._hdf5_file is not None:
@@ -401,6 +421,32 @@ def _safe_float(value) -> float | None:
     return float(value)
 
 
+def generate_phase_labels(
+    seq_len: int, 
+    p_sample: int | None, 
+    s_sample: int | None, 
+    sigma: float = 10.0
+) -> np.ndarray:
+    """
+    Generate segmentation ground truth for phase picking.
+    Returns array of shape (3, seq_len) for [Noise, P, S] probabilities.
+    P and S arrivals are represented as Gaussian distributions.
+    """
+    labels = np.zeros((3, seq_len), dtype=np.float32)
+    t = np.arange(seq_len)
+    
+    if p_sample is not None and p_sample >= 0 and not pd.isna(p_sample):
+        labels[1, :] = np.exp(-((t - p_sample) ** 2) / (2 * sigma ** 2))
+        
+    if s_sample is not None and s_sample >= 0 and not pd.isna(s_sample):
+        labels[2, :] = np.exp(-((t - s_sample) ** 2) / (2 * sigma ** 2))
+        
+    # Noise is 1 minus the sum of P and S (clipped to [0, 1])
+    labels[0, :] = 1.0 - np.clip(labels[1, :] + labels[2, :], 0.0, 1.0)
+    
+    return labels
+
+
 class STEADCollator:
     """
     Collator for batching STEAD waveforms.
@@ -423,6 +469,9 @@ class STEADCollator:
             ),
         }
         
+        if "phase_labels" in batch[0]:
+            result["labels"] = torch.stack([item["phase_labels"] for item in batch])
+            
         if self.return_labels:
             result["trace_category"] = [item["trace_category"] for item in batch]
             result["trace_name"] = [item["trace_name"] for item in batch]
