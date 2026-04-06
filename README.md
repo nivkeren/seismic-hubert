@@ -15,6 +15,7 @@ This project adapts [HuBERT](https://arxiv.org/abs/2106.07447) (Hidden-Unit BERT
 ## Documentation
 
 - [Normalization Guide](docs/normalization.md) - Detailed explanation of normalization options
+- [Phase Picking Fine-Tuning](docs/phase_picking.md) - Methodology and running phase picking fine-tuning
 
 ## Installation
 
@@ -341,8 +342,12 @@ This prevents the model from seeing overly long masks for any event early in tra
 
 ## Downstream Tasks
 
-After pretraining, the model can be fine-tuned for:
-- **Phase picking**: P and S wave arrival time detection
+After pretraining, the foundation model can be fine-tuned for various downstream tasks using the features it learned.
+
+Currently supported implementations:
+- **[Phase picking](docs/phase_picking.md)**: Detect P and S wave arrival times using a linear probe or a complex CNN head.
+
+Other potential downstream tasks you could implement include:
 - **Event detection**: Earthquake vs noise classification
 - **Magnitude estimation**: Predict earthquake magnitude
 - **Source characterization**: Depth, distance, mechanism
