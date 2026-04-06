@@ -1,5 +1,5 @@
 import torch.nn as nn
-from src.models.seismic_hubert import SeismicHubert
+from models.seismic_hubert import SeismicHubert
 
 class SeismicHubertTask(nn.Module):
     """

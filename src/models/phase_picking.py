@@ -5,8 +5,8 @@ import torch.nn.functional as F
 import einops
 import pytorch_lightning as pl
 
-from src.models.seismic_hubert import SeismicHubert, SeismicHubertConfig
-from src.models.base_task import SeismicHubertTask
+from models.seismic_hubert import SeismicHubert, SeismicHubertConfig
+from models.base_task import SeismicHubertTask
 
 
 class DoubleConvBlock(nn.Module):
