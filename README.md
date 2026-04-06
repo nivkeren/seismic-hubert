@@ -344,6 +344,22 @@ This prevents the model from seeing overly long masks for any event early in tra
 
 After pretraining, the foundation model can be fine-tuned for various downstream tasks using the features it learned.
 
+### Freezing Strategies
+
+When fine-tuning from pretrained weights for any downstream task, you can control which parts of the network learn and which remain frozen. This is crucial for evaluating representation quality (e.g., via Linear Probes) or preventing catastrophic forgetting.
+
+These flags are passed to your downstream training script:
+
+```bash
+# Freeze only the CNN feature encoder, fine-tune Transformer + Task Head
++freeze_feature_encoder=true
+
+# Freeze the entire base model (CNN + Transformer) and ONLY train the Task Head (Strict Linear Probe)
++freeze_base_model=true
+```
+
+### Supported Implementations
+
 Currently supported implementations:
 - **[Phase picking](docs/phase_picking.md)**: Detect P and S wave arrival times using a linear probe or a complex CNN head.
 
