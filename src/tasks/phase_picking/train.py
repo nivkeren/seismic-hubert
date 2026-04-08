@@ -15,9 +15,10 @@ from pathlib import Path
 
 # Add src to path so imports work from any directory
 SCRIPT_DIR = Path(__file__).resolve().parent
-PROJECT_ROOT = SCRIPT_DIR.parent
-if str(SCRIPT_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPT_DIR))
+SRC_DIR = SCRIPT_DIR.parent.parent
+PROJECT_ROOT = SRC_DIR.parent
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
 
 import hydra
 import torch
@@ -29,7 +30,7 @@ from torch.utils.data import DataLoader, random_split
 
 from data.stead_dataset import STEADDataset, STEADCollator
 from models.seismic_hubert import SeismicHubertConfig
-from models.phase_picking import PhasePickingLightning
+from tasks.phase_picking.model import PhasePickingLightning
 
 
 class PhasePickingDataModule(pl.LightningDataModule):
@@ -181,6 +182,8 @@ def main(cfg: DictConfig) -> None:
         # Determine whether to freeze layers
         freeze_feature_encoder=cfg.get("freeze_feature_encoder", False),
         freeze_base_model=cfg.get("freeze_base_model", False),
+        eval_metric=cfg.get("eval_metric", "eqt"),
+        tolerance_samples=cfg.get("tolerance_samples", 10),
     )
     
     # Optionally load pretrained base weights

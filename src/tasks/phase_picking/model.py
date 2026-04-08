@@ -6,7 +6,7 @@ import einops
 import pytorch_lightning as pl
 
 from models.seismic_hubert import SeismicHubert, SeismicHubertConfig
-from models.base_task import SeismicHubertTask
+from tasks.base_task import SeismicHubertTask
 
 
 class DoubleConvBlock(nn.Module):
@@ -210,31 +210,12 @@ class SeismicHubertForPhasePicking(SeismicHubertTask):
         }
 
 
-def vector_cross_entropy(y_pred: torch.Tensor, y_true: torch.Tensor, eps: float = 1e-5) -> torch.Tensor:
-    """
-    Cross entropy loss for probability vectors.
-    
-    Parameters
-    ----------
-    y_true : torch.Tensor
-        True label probabilities [batch_size, num_classes, seq_length]
-    y_pred : torch.Tensor
-        Predicted label probabilities [batch_size, num_classes, seq_length]
-    eps : float
-        Epsilon to clip values for stability
-        
-    Returns
-    -------
-    torch.Tensor
-        Average loss across batch
-    """
-    h = y_true * torch.log(y_pred + eps)
-    if y_pred.ndim == 3:
-        # Mean along sample dimension and sum along class dimension
-        h = h.mean(-1).sum(-1)
-    else:
-        h = h.sum(-1)  # Sum along class dimension
-    return -h.mean()  # Mean over batch axis
+from tasks.phase_picking.losses import vector_cross_entropy
+from tasks.phase_picking.metrics import (
+    calculate_eqt_metrics,
+    calculate_phasenet_metrics,
+    calculate_seislm_metrics
+)
 
 
 class PhasePickingLightning(pl.LightningModule):
@@ -252,6 +233,8 @@ class PhasePickingLightning(pl.LightningModule):
         max_steps: int = 100000,
         freeze_feature_encoder: bool = False,
         freeze_base_model: bool = False,
+        eval_metric: str = "eqt",  # "eqt", "phasenet", "seislm", "all"
+        tolerance_samples: int = 10,
     ):
         super().__init__()
         self.save_hyperparameters(ignore=["config"])
@@ -261,6 +244,8 @@ class PhasePickingLightning(pl.LightningModule):
         self.weight_decay = weight_decay
         self.warmup_steps = warmup_steps
         self.max_steps = max_steps
+        self.eval_metric = eval_metric
+        self.tolerance_samples = tolerance_samples
         
         self.model = SeismicHubertForPhasePicking(
             config=config,
@@ -287,16 +272,45 @@ class PhasePickingLightning(pl.LightningModule):
         y_pred = outputs["probs"]
         
         loss = vector_cross_entropy(y_pred, y_true)
-        return loss
+        return loss, y_pred, y_true
+
+    def _log_metrics(self, y_pred, y_true, prefix="train"):
+        if self.eval_metric in ["eqt", "all"]:
+            precision, recall, f1 = calculate_eqt_metrics(y_pred, y_true)
+            if precision.shape[0] >= 3:
+                self.log(f"{prefix}_eqt_p_precision", precision[1], on_step=False, on_epoch=True, sync_dist=True)
+                self.log(f"{prefix}_eqt_p_recall", recall[1], on_step=False, on_epoch=True, sync_dist=True)
+                self.log(f"{prefix}_eqt_p_f1", f1[1], on_step=False, on_epoch=True, sync_dist=True)
+                self.log(f"{prefix}_eqt_s_precision", precision[2], on_step=False, on_epoch=True, sync_dist=True)
+                self.log(f"{prefix}_eqt_s_recall", recall[2], on_step=False, on_epoch=True, sync_dist=True)
+                self.log(f"{prefix}_eqt_s_f1", f1[2], on_step=False, on_epoch=True, sync_dist=True)
+                
+        if self.eval_metric in ["phasenet", "all"]:
+            precision, recall, f1 = calculate_phasenet_metrics(y_pred, y_true, tol_samples=self.tolerance_samples)
+            if precision.shape[0] >= 3:
+                self.log(f"{prefix}_phasenet_p_precision", precision[1], on_step=False, on_epoch=True, sync_dist=True)
+                self.log(f"{prefix}_phasenet_p_recall", recall[1], on_step=False, on_epoch=True, sync_dist=True)
+                self.log(f"{prefix}_phasenet_p_f1", f1[1], on_step=False, on_epoch=True, sync_dist=True)
+                self.log(f"{prefix}_phasenet_s_precision", precision[2], on_step=False, on_epoch=True, sync_dist=True)
+                self.log(f"{prefix}_phasenet_s_recall", recall[2], on_step=False, on_epoch=True, sync_dist=True)
+                self.log(f"{prefix}_phasenet_s_f1", f1[2], on_step=False, on_epoch=True, sync_dist=True)
+                
+        if self.eval_metric in ["seislm", "all"]:
+            mae = calculate_seislm_metrics(y_pred, y_true)
+            if mae.shape[0] >= 3:
+                self.log(f"{prefix}_seislm_p_mae", mae[1], on_step=False, on_epoch=True, sync_dist=True)
+                self.log(f"{prefix}_seislm_s_mae", mae[2], on_step=False, on_epoch=True, sync_dist=True)
 
     def training_step(self, batch, batch_idx):
-        loss = self._shared_step(batch, batch_idx)
+        loss, y_pred, y_true = self._shared_step(batch, batch_idx)
         self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, sync_dist=True)
+        self._log_metrics(y_pred, y_true, prefix="train")
         return loss
 
     def validation_step(self, batch, batch_idx):
-        loss = self._shared_step(batch, batch_idx)
+        loss, y_pred, y_true = self._shared_step(batch, batch_idx)
         self.log("val_loss", loss, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
+        self._log_metrics(y_pred, y_true, prefix="val")
         return loss
 
     def configure_optimizers(self):

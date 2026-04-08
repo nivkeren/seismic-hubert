@@ -371,7 +371,9 @@ These flags are passed to your downstream training script:
 
 - [HuBERT: Self-Supervised Speech Representation Learning by Masked Prediction of Hidden Units](https://arxiv.org/abs/2106.07447)
 - [STEAD: A Global Data Set of Seismic Signals for AI](https://github.com/smousavi05/STEAD)
-- [Earthquake Transformer](https://www.nature.com/articles/s41467-020-17591-w)
+- [Earthquake Transformer](https://github.com/smousavi05/EQTransformer)
+- [PhaseNet: A Deep-Neural-Network-Based Seismic Arrival Time Picking Method](https://github.com/AI4EPS/PhaseNet)
+- [SeisLM: A foundation model for seismic waveforms](https://github.com/liutianlin0121/seisLM)
 
 ## License
 
