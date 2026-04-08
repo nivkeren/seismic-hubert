@@ -344,6 +344,16 @@ This prevents the model from seeing overly long masks for any event early in tra
 
 After pretraining, the foundation model can be fine-tuned for various downstream tasks using the features it learned.
 
+### Supported Implementations
+
+Currently supported implementations:
+- **[Phase picking](docs/phase_picking.md)**: Detect P and S wave arrival times using a linear probe or a complex CNN head.
+
+Other potential downstream tasks you could implement include:
+- **Event detection**: Earthquake vs noise classification
+- **Magnitude estimation**: Predict earthquake magnitude
+- **Source characterization**: Depth, distance, mechanism
+
 ### Freezing Strategies
 
 When fine-tuning from pretrained weights for any downstream task, you can control which parts of the network learn and which remain frozen. This is crucial for evaluating representation quality (e.g., via Linear Probes) or preventing catastrophic forgetting.
@@ -357,17 +367,6 @@ These flags are passed to your downstream training script:
 # Freeze the entire base model (CNN + Transformer) and ONLY train the Task Head (Strict Linear Probe)
 +freeze_base_model=true
 ```
-
-### Supported Implementations
-
-Currently supported implementations:
-- **[Phase picking](docs/phase_picking.md)**: Detect P and S wave arrival times using a linear probe or a complex CNN head.
-
-Other potential downstream tasks you could implement include:
-- **Event detection**: Earthquake vs noise classification
-- **Magnitude estimation**: Predict earthquake magnitude
-- **Source characterization**: Depth, distance, mechanism
-
 ## References
 
 - [HuBERT: Self-Supervised Speech Representation Learning by Masked Prediction of Hidden Units](https://arxiv.org/abs/2106.07447)
