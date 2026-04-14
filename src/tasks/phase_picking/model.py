@@ -210,12 +210,7 @@ class SeismicHubertForPhasePicking(SeismicHubertTask):
         }
 
 
-from tasks.phase_picking.losses import vector_cross_entropy
-from tasks.phase_picking.metrics import (
-    calculate_eqt_metrics,
-    calculate_phasenet_metrics,
-    calculate_seislm_metrics
-)
+from tasks.phase_picking.metrics import PhasePickingMetrics
 
 
 class PhasePickingLightning(pl.LightningModule):
@@ -235,6 +230,7 @@ class PhasePickingLightning(pl.LightningModule):
         freeze_base_model: bool = False,
         eval_metric: str = "eqt",  # "eqt", "phasenet", "seislm", "all"
         tolerance_samples: int = 10,
+        scheduler_config: dict | None = None,
     ):
         super().__init__()
         self.save_hyperparameters(ignore=["config"])
@@ -247,10 +243,17 @@ class PhasePickingLightning(pl.LightningModule):
         self.eval_metric = eval_metric
         self.tolerance_samples = tolerance_samples
         
+        # Default scheduler config if none provided
+        self.scheduler_config = scheduler_config or {
+            "type": "onecycle",
+            "div_factor": 25.0,
+            "final_div_factor": 10000.0,
+            "pct_start": None
+        }
+       
         self.model = SeismicHubertForPhasePicking(
             config=config,
-            num_classes=num_classes,
-            head_dropout_rate=head_dropout_rate
+            num_classes=num_classes
         )
         
         if freeze_feature_encoder:
@@ -259,6 +262,10 @@ class PhasePickingLightning(pl.LightningModule):
         if freeze_base_model:
             self.model.freeze_base_model()
             
+        self.val_eqt_metric = PhasePickingMetrics(metric_type="eqt", tol_samples=tolerance_samples)
+        self.val_phasenet_metric = PhasePickingMetrics(metric_type="phasenet", tol_samples=tolerance_samples)
+        self.val_mae_metric = PhasePickingMetrics(metric_type="seislm", tol_samples=tolerance_samples)
+        
     def forward(self, input_values, attention_mask=None):
         return self.model(input_values, attention_mask)
         
@@ -269,64 +276,105 @@ class PhasePickingLightning(pl.LightningModule):
         attention_mask = batch.get("attention_mask", None)
         
         outputs = self(x, attention_mask)
+        logits = outputs["logits"]
         y_pred = outputs["probs"]
         
-        loss = vector_cross_entropy(y_pred, y_true)
+        # PyTorch's native cross_entropy computes LogSoftmax and NLLLoss in a single, 
+        # numerically stable operation. It natively supports soft probability targets.
+        loss = F.cross_entropy(logits, y_true)
+        
         return loss, y_pred, y_true
 
-    def _log_metrics(self, y_pred, y_true, prefix="train"):
+    def _log_f1_metrics(self, prefix, name, precision, recall, f1):
+        if precision.shape[0] >= 3:
+            for i, phase in {1: 'p', 2: 's'}.items():
+                self.log(f"{prefix}_{name}_{phase}_precision", precision[i])
+                self.log(f"{prefix}_{name}_{phase}_recall", recall[i])
+                self.log(f"{prefix}_{name}_{phase}_f1", f1[i])
+
+    def _log_mae_metrics(self, prefix, name, mae, count):
+        if mae.shape[0] >= 3:
+            for i, phase in {1: 'p', 2: 's'}.items():
+                self.log(f"{prefix}_{name}_{phase}_mae", mae[i])
+            
+            total_count = count[1] + count[2] + 1e-7
+            mean_mae = (mae[1] * count[1] + mae[2] * count[2]) / total_count
+            self.log(f"{prefix}_{name}_mean_mae", mean_mae)
+
+    def _compute_and_log_metrics(self, prefix="val"):
+        # 1. Always log global MAE regardless of the eval_metric parameter
+        mae = self.val_mae_metric.compute()
+        self._log_mae_metrics(prefix, "mae", mae, self.val_mae_metric.count)
+        self.val_mae_metric.reset()
+
+        # 2. Log EQT metrics if requested
         if self.eval_metric in ["eqt", "all"]:
-            precision, recall, f1 = calculate_eqt_metrics(y_pred, y_true)
-            if precision.shape[0] >= 3:
-                self.log(f"{prefix}_eqt_p_precision", precision[1], on_step=False, on_epoch=True, sync_dist=True)
-                self.log(f"{prefix}_eqt_p_recall", recall[1], on_step=False, on_epoch=True, sync_dist=True)
-                self.log(f"{prefix}_eqt_p_f1", f1[1], on_step=False, on_epoch=True, sync_dist=True)
-                self.log(f"{prefix}_eqt_s_precision", precision[2], on_step=False, on_epoch=True, sync_dist=True)
-                self.log(f"{prefix}_eqt_s_recall", recall[2], on_step=False, on_epoch=True, sync_dist=True)
-                self.log(f"{prefix}_eqt_s_f1", f1[2], on_step=False, on_epoch=True, sync_dist=True)
-                
+            precision, recall, f1 = self.val_eqt_metric.compute()
+            self._log_f1_metrics(prefix, "eqt", precision, recall, f1)
+            self.val_eqt_metric.reset()
+            
+        # 3. Log PhaseNet metrics if requested
         if self.eval_metric in ["phasenet", "all"]:
-            precision, recall, f1 = calculate_phasenet_metrics(y_pred, y_true, tol_samples=self.tolerance_samples)
-            if precision.shape[0] >= 3:
-                self.log(f"{prefix}_phasenet_p_precision", precision[1], on_step=False, on_epoch=True, sync_dist=True)
-                self.log(f"{prefix}_phasenet_p_recall", recall[1], on_step=False, on_epoch=True, sync_dist=True)
-                self.log(f"{prefix}_phasenet_p_f1", f1[1], on_step=False, on_epoch=True, sync_dist=True)
-                self.log(f"{prefix}_phasenet_s_precision", precision[2], on_step=False, on_epoch=True, sync_dist=True)
-                self.log(f"{prefix}_phasenet_s_recall", recall[2], on_step=False, on_epoch=True, sync_dist=True)
-                self.log(f"{prefix}_phasenet_s_f1", f1[2], on_step=False, on_epoch=True, sync_dist=True)
-                
-        if self.eval_metric in ["seislm", "all"]:
-            mae = calculate_seislm_metrics(y_pred, y_true)
-            if mae.shape[0] >= 3:
-                self.log(f"{prefix}_seislm_p_mae", mae[1], on_step=False, on_epoch=True, sync_dist=True)
-                self.log(f"{prefix}_seislm_s_mae", mae[2], on_step=False, on_epoch=True, sync_dist=True)
+            precision, recall, f1, phasenet_mae = self.val_phasenet_metric.compute()
+            self._log_f1_metrics(prefix, "phasenet", precision, recall, f1)
+            self._log_mae_metrics(prefix, "phasenet", phasenet_mae, self.val_phasenet_metric.tp)
+            self.val_phasenet_metric.reset()
 
     def training_step(self, batch, batch_idx):
         loss, y_pred, y_true = self._shared_step(batch, batch_idx)
         self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, sync_dist=True)
-        self._log_metrics(y_pred, y_true, prefix="train")
         return loss
 
     def validation_step(self, batch, batch_idx):
         loss, y_pred, y_true = self._shared_step(batch, batch_idx)
         self.log("val_loss", loss, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
-        self._log_metrics(y_pred, y_true, prefix="val")
+        
+        # Always update global MAE
+        self.val_mae_metric.update(y_pred, y_true)
+        
+        if self.eval_metric in ["eqt", "all"]:
+            self.val_eqt_metric.update(y_pred, y_true)
+        if self.eval_metric in ["phasenet", "all"]:
+            self.val_phasenet_metric.update(y_pred, y_true)
+            
         return loss
 
+    def on_validation_epoch_end(self):
+        self._compute_and_log_metrics(prefix="val")
+
     def configure_optimizers(self):
+        if "type" not in self.scheduler_config:
+            raise ValueError("scheduler_config must contain a 'type' key")
         optimizer = torch.optim.AdamW(
             filter(lambda p: p.requires_grad, self.parameters()),
             lr=self.learning_rate,
             weight_decay=self.weight_decay,
         )
         
-        def lr_lambda(current_step):
-            if current_step < self.warmup_steps:
-                return float(current_step) / float(max(1, self.warmup_steps))
-            progress = float(current_step - self.warmup_steps) / float(max(1, self.max_steps - self.warmup_steps))
-            return max(0.0, 0.5 * (1.0 + math.cos(math.pi * progress)))
+        if self.scheduler_config["type"] == "onecycle":
+            pct_start = self.scheduler_config.get("pct_start")
+            pct_start = pct_start if pct_start is not None else float(self.warmup_steps) / max(1, self.max_steps)
+            scheduler = torch.optim.lr_scheduler.OneCycleLR(
+                optimizer,
+                max_lr=self.learning_rate,
+                total_steps=self.max_steps,
+                pct_start=pct_start,
+                anneal_strategy='cos',
+                cycle_momentum=False,
+                div_factor=self.scheduler_config.get("div_factor", 25.0),
+                final_div_factor=self.scheduler_config.get("final_div_factor", 10000.0),
+            )
+        elif sched_type == "lambda":
+            def lr_lambda(current_step):
+                if current_step < self.warmup_steps:
+                    return float(current_step) / float(max(1, self.warmup_steps))
+                progress = float(current_step - self.warmup_steps) / float(max(1, self.max_steps - self.warmup_steps))
+                return max(0.0, 0.5 * (1.0 + math.cos(math.pi * progress)))
+                
+            scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+        else:
+            raise ValueError(f"Unknown scheduler type: {self.scheduler_config['type']}")
             
-        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
         return {
             "optimizer": optimizer,
             "lr_scheduler": {"scheduler": scheduler, "interval": "step", "frequency": 1},

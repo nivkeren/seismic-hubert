@@ -1,84 +1,77 @@
 import torch
+from torchmetrics import Metric
 
-def _calculate_f1_metrics(true_positives: torch.Tensor, predicted_positives: torch.Tensor, possible_positives: torch.Tensor, eps: float = 1e-7):
-    """Common helper to compute precision, recall, and F1 score."""
-    recall = true_positives / (possible_positives + eps)
-    precision = true_positives / (predicted_positives + eps)
-    f1 = 2 * ((precision * recall) / (precision + recall + eps))
-    return precision, recall, f1
-
-
-def calculate_eqt_metrics(y_pred: torch.Tensor, y_true: torch.Tensor, threshold: float = 0.5, eps: float = 1e-7):
+class PhasePickingMetrics(Metric):
     """
-    Calculate precision, recall, and F1 score at the sample level, similar to EQTransformer.
-    
-    Parameters
-    ----------
-    y_pred : torch.Tensor
-        Predicted label probabilities [batch_size, num_classes, seq_length]
-    y_true : torch.Tensor
-        True label probabilities [batch_size, num_classes, seq_length]
-    threshold : float
-        Probability threshold for a positive prediction
-    eps : float
-        Epsilon for numerical stability
+    PyTorch Lightning / torchmetrics compatible metrics for Phase Picking.
+    Handles DDP sync and accumulation over epochs automatically.
+    """
+    def __init__(self, metric_type="eqt", tol_samples=10, threshold_eqt=0.5, threshold_pick=0.3, num_classes=3, **kwargs):
+        super().__init__(**kwargs)
+        self.metric_type = metric_type
+        self.tol_samples = tol_samples
+        self.threshold_eqt = threshold_eqt
+        self.threshold_pick = threshold_pick
+        self.num_classes = num_classes
         
-    Returns
-    -------
-    tuple of torch.Tensor
-        precision, recall, f1 for each class [num_classes]
-    """
-    y_pred_bin = (y_pred > threshold).float()
-    y_true_bin = (y_true > threshold).float()
-    
-    # Sum over batch and sequence length dimensions to get metrics per class
-    true_positives = (y_true_bin * y_pred_bin).sum(dim=(0, 2))
-    possible_positives = y_true_bin.sum(dim=(0, 2))
-    predicted_positives = y_pred_bin.sum(dim=(0, 2))
-    
-    return _calculate_f1_metrics(true_positives, predicted_positives, possible_positives, eps)
+        self.add_state("sum_err", default=torch.zeros(num_classes), dist_reduce_fx="sum")
 
+        if metric_type in ["eqt", "phasenet"]:
+            self.add_state("tp", default=torch.zeros(num_classes), dist_reduce_fx="sum")
+            self.add_state("pred_p", default=torch.zeros(num_classes), dist_reduce_fx="sum")
+            self.add_state("true_p", default=torch.zeros(num_classes), dist_reduce_fx="sum")
+        elif metric_type == "seislm":
+            self.add_state("count", default=torch.zeros(num_classes), dist_reduce_fx="sum")
 
-def get_pick_indices(y_probs: torch.Tensor, threshold: float = 0.3):
-    """Helper to find the argmax peak for each class and whether it exceeds a threshold."""
-    max_probs, max_idx = torch.max(y_probs, dim=-1)
-    valid_picks = max_probs > threshold
-    return max_idx, valid_picks
+    def _get_pick_indices(self, y_probs: torch.Tensor, threshold: float):
+        max_probs, max_idx = torch.max(y_probs, dim=-1)
+        valid_picks = max_probs > threshold
+        return max_idx, valid_picks
 
-
-def calculate_phasenet_metrics(y_pred: torch.Tensor, y_true: torch.Tensor, tol_samples: int = 10, threshold: float = 0.3, eps: float = 1e-7):
-    """
-    Calculate PhaseNet style metrics: Pick is a TP if predicted peak is within tol_samples of true peak.
-    """
-    pred_idx, pred_valid = get_pick_indices(y_pred, threshold)
-    true_idx, true_valid = get_pick_indices(y_true, threshold)
-    
-    # Calculate TP: both valid, and distance <= tol_samples
-    distance = torch.abs(pred_idx - true_idx)
-    tp = (pred_valid & true_valid & (distance <= tol_samples)).float().sum(dim=0)
-    
-    predicted_positives = pred_valid.float().sum(dim=0)
-    possible_positives = true_valid.float().sum(dim=0)
-    
-    return _calculate_f1_metrics(tp, predicted_positives, possible_positives, eps)
-
-
-def calculate_seislm_metrics(y_pred: torch.Tensor, y_true: torch.Tensor, threshold: float = 0.3):
-    """
-    Calculate SeisLM style continuous timing metric (Mean Absolute Error of the residual in samples).
-    Returns the MAE per class for valid picks.
-    """
-    pred_idx, pred_valid = get_pick_indices(y_pred, threshold)
-    true_idx, true_valid = get_pick_indices(y_true, threshold)
-    
-    # We only compute MAE where both are valid
-    valid_mask = pred_valid & true_valid
-    
-    # MAE per class
-    mae = torch.zeros(y_pred.shape[1], device=y_pred.device)
-    for c in range(y_pred.shape[1]):
-        mask_c = valid_mask[:, c]
-        if mask_c.sum() > 0:
-            mae[c] = torch.abs(pred_idx[mask_c, c] - true_idx[mask_c, c]).float().mean()
+    def update(self, y_pred: torch.Tensor, y_true: torch.Tensor):
+        if self.metric_type == "eqt":
+            y_pred_bin = (y_pred > self.threshold_eqt).float()
+            y_true_bin = (y_true > self.threshold_eqt).float()
             
-    return mae
+            self.tp += (y_true_bin * y_pred_bin).sum(dim=(0, 2))
+            self.true_p += y_true_bin.sum(dim=(0, 2))
+            self.pred_p += y_pred_bin.sum(dim=(0, 2))
+            
+        elif self.metric_type == "phasenet":
+            pred_idx, pred_valid = self._get_pick_indices(y_pred, self.threshold_pick)
+            true_idx, true_valid = self._get_pick_indices(y_true, self.threshold_pick)
+            
+            distance = torch.abs(pred_idx - true_idx)
+            tp_mask = pred_valid & true_valid & (distance <= self.tol_samples)
+            self.tp += tp_mask.float().sum(dim=0)
+            self.pred_p += pred_valid.float().sum(dim=0)
+            self.true_p += true_valid.float().sum(dim=0)
+            
+            for c in range(self.num_classes):
+                mask_c = tp_mask[:, c]
+                if mask_c.sum() > 0:
+                    self.sum_err[c] += distance[mask_c, c].float().sum()
+            
+        elif self.metric_type == "seislm":
+            pred_idx, pred_valid = self._get_pick_indices(y_pred, self.threshold_pick)
+            true_idx, true_valid = self._get_pick_indices(y_true, self.threshold_pick)
+            
+            valid_mask = pred_valid & true_valid
+            for c in range(self.num_classes):
+                mask_c = valid_mask[:, c]
+                if mask_c.sum() > 0:
+                    self.sum_err[c] += torch.abs(pred_idx[mask_c, c] - true_idx[mask_c, c]).float().sum()
+                    self.count[c] += mask_c.sum().float()
+
+    def compute(self):
+        eps = 1e-7
+        if self.metric_type in ["eqt", "phasenet"]:
+            recall = self.tp / (self.true_p + eps)
+            precision = self.tp / (self.pred_p + eps)
+            f1 = 2 * ((precision * recall) / (precision + recall + eps))
+            if self.metric_type == "phasenet":
+                mae = self.sum_err / (self.tp + eps)
+                return precision, recall, f1, mae
+            return precision, recall, f1
+        elif self.metric_type == "seislm":
+            return self.sum_err / (self.count + eps)

@@ -31,6 +31,7 @@ from torch.utils.data import DataLoader, random_split
 from data.stead_dataset import STEADDataset, STEADCollator
 from models.seismic_hubert import SeismicHubertConfig
 from tasks.phase_picking.model import PhasePickingLightning
+from tasks.phase_picking.callbacks import LogPhasePicksCallback
 
 
 class PhasePickingDataModule(pl.LightningDataModule):
@@ -108,7 +109,7 @@ class PhasePickingDataModule(pl.LightningDataModule):
         )
 
 
-@hydra.main(version_base=None, config_path="../conf", config_name="config")
+@hydra.main(version_base=None, config_path="../../../conf", config_name="config")
 def main(cfg: DictConfig) -> None:
     """Main training function for Phase Picking."""
     
@@ -184,6 +185,7 @@ def main(cfg: DictConfig) -> None:
         freeze_base_model=cfg.get("freeze_base_model", False),
         eval_metric=cfg.get("eval_metric", "eqt"),
         tolerance_samples=cfg.get("tolerance_samples", 10),
+        scheduler_config=OmegaConf.to_container(cfg.training.get("scheduler", None), resolve=True),
     )
     
     # Optionally load pretrained base weights
@@ -191,7 +193,7 @@ def main(cfg: DictConfig) -> None:
     if pretrained_weights:
         weights_path = resolve_path(pretrained_weights)
         print(f"Loading pretrained HuBERT weights from: {weights_path}")
-        checkpoint = torch.load(weights_path, map_location="cpu")
+        checkpoint = torch.load(weights_path, map_location="cpu", weights_only=False)
         
         # Try to extract the state dict (works with PL checkpoints)
         state_dict = checkpoint.get("state_dict", checkpoint)
@@ -219,12 +221,13 @@ def main(cfg: DictConfig) -> None:
             dirpath=output_dir / "checkpoints",
             filename=f"{run_name}-{{epoch:02d}}-{{val_loss:.4f}}",
             save_top_k=3,
-            monitor="val_loss",
+            monitor="val_loss", # TODO: change to mae
             mode="min",
             save_last=True,
         ),
         LearningRateMonitor(logging_interval="step"),
         EarlyStopping(monitor="val_loss", patience=10, mode="min", verbose=True),
+        LogPhasePicksCallback(num_samples=4),
     ]
     
     # ===== Logger =====
@@ -263,15 +266,20 @@ def main(cfg: DictConfig) -> None:
         callbacks=callbacks,
         logger=logger,
         default_root_dir=str(output_dir),
-        log_every_n_steps=10,
+        log_every_n_steps=cfg.logging.get("log_every_n_steps", 10),
         val_check_interval=1.0,
         enable_progress_bar=True,
     )
     
     # ===== Train =====
-    print(f"\nStarting training...")
     resume_ckpt = resolve_path(cfg.resume_from) if cfg.resume_from else None
-    trainer.fit(model, datamodule=data_module, ckpt_path=resume_ckpt)
+    
+    if cfg.get("validate_only", False):
+        print(f"\nStarting validation only...")
+        trainer.validate(model, datamodule=data_module, ckpt_path=resume_ckpt)
+    else:
+        print(f"\nStarting training...")
+        trainer.fit(model, datamodule=data_module, ckpt_path=resume_ckpt)
     
     # Log artifacts for MLflow
     if cfg.logging.logger == "mlflow":

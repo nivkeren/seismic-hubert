@@ -466,7 +466,7 @@ def main(cfg: DictConfig) -> None:
         callbacks=callbacks,
         logger=logger,
         default_root_dir=str(output_dir),
-        log_every_n_steps=10,
+        log_every_n_steps=cfg.logging.get("log_every_n_steps", 10),
         val_check_interval=1.0,
         enable_progress_bar=True,
     )
